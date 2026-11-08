@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from . import events
 from .config import EVENTS_FILE, SAMPLE_EVERY
@@ -61,9 +61,23 @@ _SAFARI = (
     '  return (URL of t) & linefeed & (name of t)\n'
     'end tell'
 )
+# Chrome and Brave can say whether the window is incognito ("mode"). The
+# third line is the mode; a private tab is never recorded (see browser_tab).
+# Safari and Arc have no such property, so private windows there are a gap.
+_CHROME_MODE = (
+    'tell application id "{bid}"\n'
+    '  set m to "normal"\n'
+    '  try\n'
+    '    set m to mode of front window\n'
+    '  end try\n'
+    '  set t to active tab of front window\n'
+    '  return (URL of t) & linefeed & (title of t) & linefeed & m\n'
+    'end tell'
+)
+MODE_AWARE = {"com.google.Chrome", "com.brave.Browser"}
 BROWSERS = {
-    "com.google.Chrome": _CHROME_LIKE.format(bid="com.google.Chrome"),
-    "com.brave.Browser": _CHROME_LIKE.format(bid="com.brave.Browser"),
+    "com.google.Chrome": _CHROME_MODE.format(bid="com.google.Chrome"),
+    "com.brave.Browser": _CHROME_MODE.format(bid="com.brave.Browser"),
     "company.thebrowser.Browser": _CHROME_LIKE.format(bid="company.thebrowser.Browser"),  # Arc
     "com.apple.Safari": _SAFARI,
 }
@@ -91,6 +105,24 @@ def domain_of(url: str | None) -> str | None:
     return host
 
 
+def clean_url(url: str | None) -> str | None:
+    """Drop the query string and fragment: they can hold search terms, tokens
+    or email ids, and nothing reads them (domain and path are enough)."""
+    if not url:
+        return url
+    parts = urlsplit(url)
+    if not parts.scheme:
+        return url.split("?", 1)[0].split("#", 1)[0]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def parse_mode_output(out: str) -> tuple[str | None, str | None, bool]:
+    """'URL\ntitle\nmode' -> (url, title, private)."""
+    body, _, mode = out.strip("\n").rpartition("\n")
+    url, title = parse_tab_output(body)
+    return url, title, mode.strip().lower() == "incognito"
+
+
 def parse_tab_output(out: str) -> tuple[str | None, str | None]:
     """Split the AppleScript output 'URL\\ntitle' into (url, title)."""
     url, _, title = out.strip("\n").partition("\n")
@@ -112,6 +144,9 @@ def browser_tab(bundle: str | None) -> tuple[str | None, str | None]:
         return None, None
     if res.returncode != 0:
         return None, None
+    if bundle in MODE_AWARE:
+        url, title, private = parse_mode_output(res.stdout)
+        return (None, None) if private else (url, title)
     return parse_tab_output(res.stdout)
 
 
@@ -127,6 +162,7 @@ class Tracker:
 
     def app_record(self, name, bundle, url, title) -> dict | None:
         """Write an `app` record if (app, url, title) changed. Returns it, or None."""
+        url = clean_url(url)
         key = (name, url, title)
         if key == self.last_key:
             return None

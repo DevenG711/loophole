@@ -1,4 +1,6 @@
-"""Ties it together: read the log, score "when" and "where", decide, write.
+"""Ties it together: read the log, score "when" (local stall) and "where"
+(BehaviorGPT), ask the pickup memory whether this moment looks like the ones
+before past pickups (it uses both), decide, write.
 
 score_now(...) -> dict for the UI (colour is "green", "amber" or "red")
 run(stop, on_score) -> loops every SCORE_EVERY seconds until stop is set
@@ -9,12 +11,56 @@ import traceback
 from pathlib import Path
 
 from . import events, nudge, when_score, where_score
-from .config import EVENTS_FILE, RANK_THRESHOLD, SCORE_EVERY, STALL_THRESHOLD
+from .config import EVENTS_FILE, SCORE_EVERY
 
 
 def _last_nudge_ts(records: list[dict]) -> float | None:
     shown = [r["ts"] for r in records if r["kind"] == "nudge" and r.get("action") == "shown"]
     return max(shown) if shown else None
+
+
+def colour_for(do_nudge: bool, memory: dict | None) -> str:
+    """Dot colour follows the pickup memory. Red: nudge. Amber: the memory
+    recognises this moment but can't nudge now (cooldown, or you just came
+    back). Green: nothing here looks like your past pickups."""
+    if do_nudge:
+        return "red"
+    if memory and memory.get("text"):
+        return "amber"
+    return "green"
+
+
+def _memory(records: list[dict], now: float) -> dict | None:
+    """Pickup memory for this moment. Never lets a failure stop the engine."""
+    try:
+        from . import precursor
+        return precursor.match(records, now)
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+def _fill_app_only_where(records: list[dict], now: float, client) -> None:
+    """The pickup memory reads BehaviorGPT from the cache only, for a history
+    of laptop apps alone (no phone records). That history differs from the
+    live one only within PHONE_HISTORY_MAX_AGE of a pickup; then ask for it
+    too, so the cache has it. Same data as the live call, minus phone apps."""
+    try:
+        apps = where_score.app_records(records)
+        if where_score._specs(apps, now) != where_score._specs(records, now):
+            where_score.score(apps, now, client=client)
+    except Exception:
+        traceback.print_exc()
+
+
+def _memory_log(memory: dict | None) -> dict | None:
+    """Small version of the memory for the score record."""
+    if not memory:
+        return None
+    return {"n_episodes": memory.get("n_episodes"), "ready": memory.get("ready"),
+            "lift": memory.get("lift"), "likely_app": memory.get("likely_app"),
+            "text": memory.get("text"), "score": memory.get("score"),
+            "match_ts": [m.get("ts") for m in memory.get("matches") or []]}
 
 
 def score_now(path: Path = EVENTS_FILE, now: float | None = None, client=None) -> dict:
@@ -26,22 +72,20 @@ def score_now(path: Path = EVENTS_FILE, now: float | None = None, client=None) -
     parts = when_score.contributions(f)
     when = when_score.stall_score(f)
     where = where_score.score(records, now, client=client)
+    _fill_app_only_where(records, now, client)
+
+    memory = _memory(records, now)
 
     do_nudge, reason = nudge.decide(when, where["rank"], f["active_recent"],
-                                    _last_nudge_ts(records), now)
+                                    _last_nudge_ts(records), now, memory=memory)
 
-    when_high = when >= STALL_THRESHOLD
-    where_high = where["rank"] is not None and where["rank"] <= RANK_THRESHOLD
-    if do_nudge:
-        colour = "red"
-    elif when_high or where_high:
-        colour = "amber"
-    else:
-        colour = "green"
+    colour = colour_for(do_nudge, memory)
 
     events.write("score", path=path, ts=now, when=when, features=f,
                  where_rank=where["rank"], where_share=where["share"],
-                 top=where["top"], nudge=do_nudge, reason=reason, colour=colour)
+                 top=where["top"], where_gap=where.get("gap"), pull_app=where.get("pull_app"),
+                 pull_z=where.get("pull_z"), nudge=do_nudge, reason=reason, colour=colour,
+                 memory=_memory_log(memory))
     if do_nudge:
         events.write("nudge", path=path, ts=now, action="shown")
 
@@ -58,9 +102,14 @@ def score_now(path: Path = EVENTS_FILE, now: float | None = None, client=None) -
         "items_sent": where["items_sent"],
         "where_source": where["source"],  # "api", "cache" or "none"
         "where_error": where["error"],
+        "where_gap": where.get("gap"),    # BehaviorGPT's lean to distraction (z units)
+        "pull_app": where.get("pull_app"),
+        "pull_name": where.get("pull_name"),
+        "pull_z": where.get("pull_z"),
         "nudge": do_nudge,
         "reason": reason,
         "colour": colour,
+        "memory": memory,                # pickup memory (precursor.match), or None
     }
 
 

@@ -10,7 +10,8 @@ Public functions:
   contributions(f)      -> dict of how much each signal added (for the UI "why")
   why(f)                -> short plain-English reasons, biggest first
 """
-from .config import ACTIVE_WITHIN
+from .config import (ACTIVE_STEP_IDLE_S, ACTIVE_WITHIN, MIN_ACTIVE_S, RETURN_GAP_S, RETURN_GRACE_S,
+                     SETTLED_APPS, SETTLED_DOMAINS, SETTLED_DWELL_S, SETTLED_MAX_IDLE_S)
 
 # Kinds we are allowed to read. "phone" is deliberately missing.
 ALLOWED_KINDS = {"input", "app", "session"}
@@ -58,13 +59,40 @@ def _in_window(steps, t, window):
     return [s for s in steps if s[1] > t - window]
 
 
-def _rate_per_min(steps, t, window, first_ts):
-    """Keys per minute over the window (or over the data we have, if less)."""
-    span = min(window, t - first_ts)
-    if span <= 0:
-        return 0.0
-    keys = sum(d["key"] for _, _, d in _in_window(steps, t, window))
-    return keys / (span / 60)
+def _active_rate_per_min(inputs, t, window):
+    """Keys per minute over ACTIVE time only, plus the active seconds.
+
+    A step counts as active if the sample at its end saw input (of any kind)
+    in the last ACTIVE_STEP_IDLE_S seconds. Idle minutes are left out, so
+    coming back from a pause does not look like "typing slowed down".
+    """
+    keys, active_s = 0, 0.0
+    for prev, cur in zip(inputs, inputs[1:]):
+        if cur["ts"] <= t - window:
+            continue
+        if cur.get("idle", {}).get("any", 0) >= ACTIVE_STEP_IDLE_S:
+            continue
+        a = prev.get("counts", {}).get("key", 0)
+        b = cur.get("counts", {}).get("key", 0)
+        keys += b - a if b >= a else b
+        active_s += min(cur["ts"] - max(prev["ts"], t - window), MAX_STEP_S)
+    rate = keys / (active_s / 60) if active_s > 0 else 0.0
+    return rate, active_s
+
+
+def _place(rec):
+    """Where you are, ignoring tab-title changes: (app, domain)."""
+    return ((rec.get("app") or "").lower(), (rec.get("domain") or "").lower())
+
+
+def _visits(apps):
+    """App records with title-only changes merged: list of (start_ts, place)."""
+    visits = []
+    for r in apps:
+        place = _place(r)
+        if not visits or visits[-1][1] != place:
+            visits.append((r["ts"], place))
+    return visits
 
 
 def _burst_pause_count(steps, t):
@@ -106,18 +134,24 @@ def features(records: list[dict], t: float) -> dict:
         # "No input" for dwell = no typing and no clicking (scrolling or
         # moving the mouse alone does not count as working).
         no_work_s = min(idle.get("key", 0), idle.get("click", 0)) + since
-        active_recent = idle_s <= ACTIVE_WITHIN
+        # Just back from a pause? Then key_drop and dwell still count the
+        # idle time, which looks like a stall but is not one. Uses only input
+        # samples before t (never score records, which can be wrong after a
+        # restart).
+        just_returned = any(r.get("idle", {}).get("any", 0) >= RETURN_GAP_S
+                            for r in inputs if r["ts"] > t - RETURN_GRACE_S)
+        active_recent = idle_s <= ACTIVE_WITHIN and not just_returned
     else:
+        just_returned = False
         idle_s = 0.0          # no data yet: treat as unknown, not idle
         no_work_s = 0.0
         active_recent = False
 
-    # Typing rate now vs your own last 10 minutes.
-    first_input = inputs[0]["ts"] if inputs else t
-    key_rate_now = _rate_per_min(steps, t, NOW_WINDOW, first_input)
-    key_rate_base = _rate_per_min(steps, t, BASE_WINDOW, first_input)
+    # Typing rate now vs your own last 10 minutes, over active time only.
+    key_rate_now, active_now_s = _active_rate_per_min(inputs, t, NOW_WINDOW)
+    key_rate_base, active_base_s = _active_rate_per_min(inputs, t, BASE_WINDOW)
     key_drop = 0.0
-    if key_rate_base > 0:
+    if key_rate_base > 0 and active_now_s >= MIN_ACTIVE_S:
         key_drop = min(1.0, max(0.0, 1 - key_rate_now / key_rate_base))
 
     # Seconds in the last 2 min with scrolling but no typing.
@@ -126,14 +160,24 @@ def features(records: list[dict], t: float) -> dict:
         if d["scroll"] > 0 and d["key"] == 0:
             scroll_no_type += min(t1 - max(t0, t - NOW_WINDOW), MAX_STEP_S)
 
-    # Time on the current window with no typing/clicking.
-    dwell = t - apps[-1]["ts"] if apps else no_work_s
-    dwell_no_input_s = min(dwell, no_work_s)
+    # Time on the current app/site (a tab title changing, like "(2) Inbox",
+    # is not a move), and time there with no typing/clicking.
+    visits = _visits(apps)
+    dwell_s = t - visits[-1][0] if visits else no_work_s
+    dwell_no_input_s = min(dwell_s, no_work_s)
 
-    # App/tab switches per minute over the last 5 min.
+    # App/site switches per minute over the last 5 min.
     switch_span = max(60.0, min(RECENT_WINDOW, t - session_start))
-    switches = sum(1 for r in apps if r["ts"] > t - RECENT_WINDOW)
+    switches = sum(1 for ts, _ in visits if ts > t - RECENT_WINDOW)
     switches_per_min = switches / (switch_span / 60)
+
+    # Settled: staying on one thing and still touching the computer (reading
+    # an article, docs or an agent's output), or on a call. See contributions().
+    app_name, domain = visits[-1][1] if visits else ("", "")
+    on_call = app_name in SETTLED_APPS or any(
+        domain == d or domain.endswith("." + d) for d in SETTLED_DOMAINS)
+    settled = bool(visits) and dwell_s >= SETTLED_DWELL_S and (
+        on_call or (inputs and idle_s < SETTLED_MAX_IDLE_S))
 
     # Minutes since the last break (idle >= 4 min, a tracker gap >= 4 min,
     # or session start).
@@ -156,9 +200,12 @@ def features(records: list[dict], t: float) -> dict:
         "scroll_no_type": round(scroll_no_type, 1),
         "burst_pause_count": _burst_pause_count(steps, t),
         "dwell_no_input_s": round(dwell_no_input_s, 1),
+        "dwell_s": round(dwell_s, 1),
+        "settled": settled,
         "switches_per_min": round(switches_per_min, 2),
         "minutes_since_break": round(minutes_since_break, 1),
         "active_recent": active_recent,
+        "just_returned": just_returned,
     }
 
 
@@ -169,6 +216,10 @@ def features(records: list[dict], t: float) -> dict:
 # by its weight. The score is the sum. With all signals maxed out the score is
 # about 3.0; config.STALL_THRESHOLD (1.0) means "two or three signals are
 # clearly on".
+#
+# While "settled" (45 s+ on one app/site with input in the last 90 s, or on a
+# call), key_drop, scroll_no_type, burst_pause_count and dwell_no_input_s are
+# set to 0: they describe reading too. Typing rates use active time only.
 #
 # feature              ramp (0 at -> 1 at)          weight
 # key_drop             0 -> 1 (already a fraction)   0.6
@@ -201,6 +252,11 @@ RAMPS = {
     "idle_s": (15.0, 90.0),
 }
 
+# Signals that also describe reading (or a call), so they do not count while
+# you are settled on one app/site. Switching, long sessions and going quiet
+# still count.
+EXCUSED_WHEN_SETTLED = {"key_drop", "scroll_no_type", "burst_pause_count", "dwell_no_input_s"}
+
 REASONS = {
     "key_drop": "your typing slowed down a lot",
     "scroll_no_type": "you are scrolling without typing",
@@ -224,6 +280,8 @@ def contributions(f: dict, weights: dict | None = None) -> dict:
         value = f.get(name, 0) or 0
         if name == "idle_s" and value >= BREAK_GAP_S:
             value = 0  # a real break is good, not a stall
+        if f.get("settled") and name in EXCUSED_WHEN_SETTLED:
+            value = 0  # reading looks like this; it is not a stall
         out[name] = round(weight * _ramp(value, *RAMPS[name]), 3)
     return out
 

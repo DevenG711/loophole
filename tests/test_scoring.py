@@ -181,6 +181,48 @@ def test_history_window_and_no_peeking():
     assert specs[-1] == ("id", "d_tiktok")
 
 
+def test_noise_apps_and_sites_are_skipped():
+    recs = [app(T0 + 1, "Finder"), app(T0 + 2, "System Settings"), app(T0 + 3, "Script Editor"),
+            app(T0 + 4, "Google Chrome"),                       # no domain: unknown page
+            app(T0 + 5, "Google Chrome", domain="ntfy.sh"),
+            app(T0 + 6, "Google Chrome", domain="login.microsoftonline.com"),
+            app(T0 + 7, "Google Chrome", domain="newtab"),      # kept on purpose
+            app(T0 + 8, "Google Chrome", domain="outlook.cloud.microsoft"),
+            app(T0 + 9, "Cursor")]
+    labels = [where_score._label(s) for s in where_score._specs(recs, T0 + 100)]
+    assert labels == ["ext:newtab", "f_gmail", "f_vscode"]
+
+
+def test_history_drops_old_events():
+    from loophole.config import HISTORY_MAX_AGE
+    recs = [app(T0, "Messages"), app(T0 + HISTORY_MAX_AGE, "Code")]
+    assert where_score._specs(recs, T0 + HISTORY_MAX_AGE + 1) == [("id", "f_vscode")]
+    # Long focus in one app: the only record is old, but it is still kept.
+    assert where_score._specs(recs[1:], T0 + 3 * HISTORY_MAX_AGE) == [("id", "f_vscode")]
+
+
+def test_rank_skips_sticky_distractions():
+    ids = ["f_zoom", "d_hulu", "f_vscode", "d_spotify_pod", "d_instagram"] + ["f_slack"] * 5
+    out = where_score._summarise(ids)
+    assert out["rank"] == 4 and out["share"] == 0.3
+
+
+def test_just_returned_from_pause_is_not_active():
+    # Typing, then a 2-minute pause, then one sample of input again.
+    recs = steady_typing(T0, 5)
+    last = recs[-1]["counts"]["key"]
+    recs += [inp(T0 + 300 + i * 2, last, idle=float(i * 2)) for i in range(1, 61)]  # idle to 120 s
+    back = T0 + 300 + 122
+    recs.append(inp(back, last + 5, idle=0.0))
+    f = when_score.features(recs, back + 1)
+    assert f["just_returned"] is True and f["active_recent"] is False
+    # 90 s later, with steady input, the grace period is over.
+    later = back + 92
+    recs += [inp(back + i * 2, last + 5 + i, idle=0.0) for i in range(1, 47)]
+    f = when_score.features(recs, later + 1)
+    assert f["just_returned"] is False and f["active_recent"] is True
+
+
 def test_where_score_uses_cache(tmp_path):
     cache = tmp_path / "cache.json"
     recs = [app(T0, "Code"), app(T0 + 1, "Messages")]
@@ -206,24 +248,36 @@ def test_explain():
 
 # ---------------------------------------------------------------- nudge
 
-def test_decide_needs_both_scores():
+def test_old_rule_needs_both_scores():
     hi, lo = STALL_THRESHOLD + 0.1, STALL_THRESHOLD - 0.1
-    assert nudge.decide(hi, 3, True, None, T0)[0] is True
-    assert nudge.decide(hi, 19, True, None, T0)[0] is False
-    assert nudge.decide(lo, 0, True, None, T0)[0] is False
-    assert nudge.decide(hi, 0, False, None, T0)[0] is False   # away from keyboard
+    d = nudge.decide_when_where
+    assert d(hi, 3, True, None, T0)[0] is True
+    assert d(hi, 4, True, None, T0)[0] is False
+    assert d(lo, 0, True, None, T0)[0] is False
+    assert d(hi, 0, False, None, T0)[0] is False   # away from keyboard
+    assert d(STALL_THRESHOLD * 1.2, None, True, None, T0)[0] is False
+    assert d(STALL_THRESHOLD * 1.5, None, True, None, T0)[0] is True
 
 
-def test_decide_cooldown():
+MEM = {"n_episodes": 6, "ready": True, "text": "This looks like 14:16, right before you opened Tiktok."}
+
+
+def test_decide_nudges_only_on_memory():
     hi = STALL_THRESHOLD * 2
-    ok, reason = nudge.decide(hi, 0, True, T0 - 60, T0)
+    # Stalled with a distraction at #0 used to nudge; now only the memory can.
+    assert nudge.decide(hi, 0, True, None, T0)[0] is False
+    assert nudge.decide(hi, 0, True, None, T0, memory={**MEM, "text": None})[0] is False
+    ok, reason = nudge.decide(0.0, 30, True, None, T0, memory=MEM)
+    assert ok is True and "past phone pickups" in reason
+    ok, reason = nudge.decide(0.0, 30, True, None, T0, memory={"n_episodes": 2, "ready": False})
+    assert ok is False and "2 real pickups" in reason
+
+
+def test_decide_cooldown_and_away_block_memory():
+    ok, reason = nudge.decide(0.0, 0, True, T0 - 60, T0, memory=MEM)
     assert ok is False and "Recently nudged" in reason
-    assert nudge.decide(hi, 0, True, T0 - NUDGE_COOLDOWN - 1, T0)[0] is True
-
-
-def test_decide_api_down_needs_stronger_stall():
-    assert nudge.decide(STALL_THRESHOLD * 1.2, None, True, None, T0)[0] is False
-    assert nudge.decide(STALL_THRESHOLD * 1.5, None, True, None, T0)[0] is True
+    assert nudge.decide(0.0, 0, True, T0 - NUDGE_COOLDOWN - 1, T0, memory=MEM)[0] is True
+    assert nudge.decide(0.0, 0, False, None, T0, memory=MEM)[0] is False
 
 
 # ---------------------------------------------------------------- engine
@@ -243,17 +297,26 @@ def test_engine_writes_score_and_nudge(tmp_path, monkeypatch):
 
     client = FakeClient(["d_imessage"] + ["f_slack"] * 9)
     now = T0 + 601
+    # Stalled with a distraction at #0, but no pickup memory: no nudge any more.
     out = engine.score_now(path=path, now=now, client=client)
+    assert out["nudge"] is False and out["colour"] == "green", out
+
+    # The pickup memory recognises the moment: nudge.
+    from loophole import precursor
+    memory = {"n_episodes": 6, "ready": True, "text": "This looks like 14:16..."}
+    monkeypatch.setattr(precursor, "match", lambda records, t: memory)
+    out = engine.score_now(path=path, now=now + 1, client=client)
     assert out["nudge"] is True and out["colour"] == "red", out
-    kinds = [r["kind"] for r in events.read(path) if r["ts"] == now]
+    kinds = [r["kind"] for r in events.read(path) if r["ts"] == now + 1]
     assert kinds == ["score", "nudge"]
 
-    # 30 s later: cooldown blocks it; still amber because both scores stay high.
-    out2 = engine.score_now(path=path, now=now + 30, client=client)
+    # 30 s later: cooldown blocks it; amber because the memory still matches.
+    out2 = engine.score_now(path=path, now=now + 31, client=client)
     assert out2["nudge"] is False and out2["colour"] == "amber"
 
 
-def test_engine_api_down_does_not_crash(tmp_path):
+def test_engine_api_down_does_not_crash(tmp_path, monkeypatch):
+    monkeypatch.setattr(where_score, "CACHE_FILE", tmp_path / "cache.json")  # not the real cache
     path = tmp_path / "events.jsonl"
     write_all(path, steady_typing(T0, 5) + [app(T0, "Code")])
     out = engine.score_now(path=path, now=T0 + 300, client=FakeClient(fail=True))
@@ -280,3 +343,78 @@ def test_live_coding_ranks_higher_than_youtube(tmp_path):
     print(f"LIVE youtube: rank={y['rank']} share={y['share']} top={y['top']}")
     assert c["rank"] is not None and y["rank"] is not None, (c["error"], y["error"])
     assert c["rank"] > y["rank"]
+
+
+# ---------------------------------------------------------------- settled / reading
+
+def _reading_after_typing(dwell_app, scroll_every=20, minutes=3, domain=None):
+    """5 min typing in Code, then `minutes` on one window: no keys, a scroll
+    every `scroll_every` s (input samples every 2 s)."""
+    recs = steady_typing(T0, 5) + [app(T0, "Code")]
+    keys = recs[-2]["counts"]["key"] if recs[-1]["kind"] == "app" else recs[-1]["counts"]["key"]
+    start = T0 + 302
+    recs.append(app(start, dwell_app, domain=domain))
+    scroll, last_scroll = 0, start
+    for i in range(int(minutes * 60 / 2)):
+        ts = start + i * 2
+        if (ts - start) % scroll_every == 0:
+            scroll += 3
+            last_scroll = ts
+        recs.append(inp(ts, keys, scroll=scroll, idle=float(ts - last_scroll),
+                        key_idle=float(ts - start + 2)))
+    return recs, start + minutes * 60
+
+
+def test_reading_one_page_is_not_a_stall():
+    recs, t = _reading_after_typing("Google Chrome", domain="developer.mozilla.org")
+    f = when_score.features(recs, t)
+    assert f["settled"] is True
+    parts = when_score.contributions(f)
+    assert parts["key_drop"] == 0 and parts["scroll_no_type"] == 0 and parts["dwell_no_input_s"] == 0
+    assert when_score.stall_score(f) < STALL_THRESHOLD
+
+
+def test_hopping_without_typing_is_a_stall():
+    recs, t = _reading_after_typing("Google Chrome", domain="developer.mozilla.org")
+    # Same input, but bouncing between apps every 8 s for the last 2 minutes.
+    names = ["Google Chrome", "Code", "Slack", "Messages"]
+    recs += [app(t - 120 + i * 8, names[i % 4]) for i in range(15)]
+    f = when_score.features(recs, t)
+    assert f["settled"] is False
+    assert when_score.stall_score(f) >= STALL_THRESHOLD
+
+
+def test_tab_title_change_is_not_a_switch():
+    recs = steady_typing(T0, 3)
+    recs += [app(T0 + 10 + i, "Google Chrome", domain="mail.google.com", title=f"Inbox ({i})")
+             for i in range(10)]
+    f = when_score.features(recs, T0 + 100)
+    assert f["dwell_s"] == 90.0          # from the first Gmail record, not the last title
+    assert f["switches_per_min"] <= 1.0
+
+
+def test_call_counts_as_settled_without_input():
+    recs = steady_typing(T0, 3) + [app(T0, "Code"), app(T0 + 180, "zoom.us")]
+    keys = recs[-3]["counts"]["key"]
+    recs += [inp(T0 + 180 + i * 2, keys, idle=float(i * 2)) for i in range(1, 60)]
+    f = when_score.features(recs, T0 + 180 + 119)
+    assert f["settled"] is True
+
+
+def test_typing_rate_ignores_idle_time():
+    # Type steadily, then go fully idle for 100 s: the active-time rate stays
+    # the same, so no "typing slowed" signal from the pause itself.
+    recs = steady_typing(T0, 5)
+    last = recs[-1]["counts"]["key"]
+    recs += [inp(T0 + 300 + i * 2, last, idle=float(i * 2)) for i in range(1, 51)]
+    f = when_score.features(recs, T0 + 400)
+    # Only the ~10 s right after the last key counts as active-but-not-typing
+    # (the old wall-clock rate gave about 0.8 here).
+    assert f["key_drop"] < 0.3
+
+
+def test_old_phone_pickup_leaves_history():
+    from loophole.config import PHONE_HISTORY_MAX_AGE
+    recs = [app(T0, "Code"), phone(T0 + 10, "TikTok"), app(T0 + 20, "Slack")]
+    assert ("id", "d_tiktok") in where_score._specs(recs, T0 + 30)
+    assert ("id", "d_tiktok") not in where_score._specs(recs, T0 + 11 + PHONE_HISTORY_MAX_AGE)
