@@ -1,13 +1,13 @@
 # Phone setup (iPhone, about 5 minutes)
 
-Focus Guard learns when you pick up your phone. An iPhone Shortcut sends the
+Loophole learns when you pick up your phone. An iPhone Shortcut sends the
 app name to ntfy.sh each time you open a distracting app. The laptop checks
 ntfy.sh every few seconds.
 
 ## 1. Pick a topic name
 
 Your topic is set as `NTFY_TOPIC` in `.env`, for example
-`focusguard-k7q2x9m4p1`. Use the same name on the phone.
+`loophole-k7q2x9m4p1`. Use the same name on the phone.
 
 **Keep it random.** Anyone who knows the topic name can read it and post to it.
 Do not use your name or anything easy to guess.
@@ -39,7 +39,7 @@ The laptop only needs the app name as plain text, for example `Instagram`.
 1. In the automation, tap the play button to run it once by hand.
 2. If iOS asks "Allow ... to connect to ntfy.sh?", tap **Always Allow**.
    Without this, it will ask every time and the automation will not run silently.
-3. Open Instagram (or any app you picked). The Focus Guard setup screen should
+3. Open Instagram (or any app you picked). The Loophole setup screen should
    show the pickup within about 10 seconds.
 
 You can also open `https://ntfy.sh/<NTFY_TOPIC>` in a browser to see the

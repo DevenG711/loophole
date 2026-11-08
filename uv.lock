@@ -258,7 +258,7 @@ wheels = [
 ]
 
 [[package]]
-name = "focusguard"
+name = "loophole"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

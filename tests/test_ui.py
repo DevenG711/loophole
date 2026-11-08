@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from focusguard import menubar as mb
+from loophole import menubar as mb
 
 ROOT = Path(__file__).resolve().parent.parent
 

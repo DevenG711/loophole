@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from focusguard import events, phone, tracker
+from loophole import events, phone, tracker
 
 
 # --- URL -> domain ----------------------------------------------------------

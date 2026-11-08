@@ -32,7 +32,7 @@ START_TS = 1762592400.0  # 2025-11-08 09:00 UTC; any fixed time works
 WORK = [
     ("Code", "com.microsoft.VSCode", None, None, None),
     ("Terminal", "com.apple.Terminal", None, None, None),
-    ("Google Chrome", "com.google.Chrome", "https://github.com/team/focusguard/pull/12",
+    ("Google Chrome", "com.google.Chrome", "https://github.com/team/loophole/pull/12",
      "github.com", "Add stall score by teammate - Pull Request #12"),
     ("Google Chrome", "com.google.Chrome", "https://docs.python.org/3/library/json.html",
      "docs.python.org", "json - JSON encoder and decoder"),
@@ -151,7 +151,7 @@ def add_scores(recs: list[dict]) -> list[dict]:
     """For the dashboard sample only: add `score` records every 30 s using the
     real when_score and nudge code if they exist. No API calls (where = None)."""
     try:
-        from focusguard import nudge, when_score
+        from loophole import nudge, when_score
     except ImportError:
         return recs
     out, last_nudge = list(recs), None

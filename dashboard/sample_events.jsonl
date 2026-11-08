@@ -1453,7 +1453,7 @@
 {"ts": 1762595104.0, "kind": "input", "idle": {"any": 1.5, "key": 2.36, "click": 1.78, "scroll": 38.17, "mouse": 1.5}, "counts": {"key": 4417, "click": 304, "scroll": 212, "mouse": 1121}}
 {"ts": 1762595106.0, "kind": "input", "idle": {"any": 0.45, "key": 0.45, "click": 3.78, "scroll": 40.17, "mouse": 3.5}, "counts": {"key": 4419, "click": 304, "scroll": 212, "mouse": 1121}}
 {"ts": 1762595108.0, "kind": "input", "idle": {"any": 0.02, "key": 0.02, "click": 5.78, "scroll": 42.17, "mouse": 0.73}, "counts": {"key": 4423, "click": 304, "scroll": 212, "mouse": 1122}}
-{"ts": 1762595108.5, "kind": "app", "app": "Google Chrome", "bundle": "com.google.Chrome", "url": "https://github.com/team/focusguard/pull/12", "domain": "github.com", "title": "Add stall score by teammate - Pull Request #12"}
+{"ts": 1762595108.5, "kind": "app", "app": "Google Chrome", "bundle": "com.google.Chrome", "url": "https://github.com/team/loophole/pull/12", "domain": "github.com", "title": "Add stall score by teammate - Pull Request #12"}
 {"ts": 1762595110.0, "kind": "input", "idle": {"any": 0.5, "key": 0.5, "click": 1.91, "scroll": 44.17, "mouse": 2.73}, "counts": {"key": 4426, "click": 305, "scroll": 212, "mouse": 1122}}
 {"ts": 1762595112.0, "kind": "input", "idle": {"any": 0.65, "key": 1.91, "click": 1.36, "scroll": 46.17, "mouse": 0.65}, "counts": {"key": 4427, "click": 306, "scroll": 212, "mouse": 1124}}
 {"ts": 1762595114.0, "kind": "input", "idle": {"any": 0.82, "key": 0.82, "click": 3.36, "scroll": 48.17, "mouse": 1.15}, "counts": {"key": 4439, "click": 306, "scroll": 212, "mouse": 1127}}

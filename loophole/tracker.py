@@ -4,7 +4,7 @@ the keyboard and mouse are. Writes `app` and `input` records (see events.py).
 We only read timers and counters from macOS. We never read what keys you press.
 
 Run on its own to watch it work:
-    .venv/bin/python -m focusguard.tracker
+    .venv/bin/python -m loophole.tracker
 """
 import ctypes
 import ctypes.util
@@ -170,7 +170,7 @@ def _print_tick(t: Tracker) -> None:
 if __name__ == "__main__":
     import argparse
 
-    p = argparse.ArgumentParser(description="Run the Focus Guard tracker loop.")
+    p = argparse.ArgumentParser(description="Run the Loophole tracker loop.")
     p.add_argument("--no-browser", action="store_true", help="do not read browser tabs")
     p.add_argument("--out", type=Path, default=EVENTS_FILE, help="events file to write")
     p.add_argument("--once", action="store_true", help="take one sample and exit")

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from focusguard import engine, events, nudge, when_score, where_score
-from focusguard.config import NUDGE_COOLDOWN, STALL_THRESHOLD
+from loophole import engine, events, nudge, when_score, where_score
+from loophole.config import NUDGE_COOLDOWN, STALL_THRESHOLD
 
 T0 = 1_700_000_000.0
 

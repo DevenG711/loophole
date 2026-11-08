@@ -1,9 +1,9 @@
-"""Focus Guard dashboard (Streamlit).
+"""Loophole dashboard (Streamlit).
 
 Run:     .venv/bin/streamlit run dashboard/app.py
 Deploy:  Streamlit Community Cloud, main file = dashboard/app.py (see docs/run.md)
 
-Reads a Focus Guard events file (JSON lines, format in focusguard/events.py)
+Reads a Loophole events file (JSON lines, format in loophole/events.py)
 and draws one session timeline:
   - app strip: green = work, red = distraction
   - "when" line: how stalled you are (engine stall score)
@@ -12,7 +12,7 @@ and draws one session timeline:
     in the top RANK_LIMIT)
   - orange rules = nudges, purple triangles = phone pickups
 
-This file has no focusguard imports except the dependency-free catalog, so it
+This file has no loophole imports except the dependency-free catalog, so it
 runs on Streamlit Cloud with only streamlit + pandas + altair installed.
 The data helpers are plain functions so tests can import them; the page is
 only drawn when Streamlit runs this file as __main__.
@@ -29,16 +29,16 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLE_FILE = Path(__file__).resolve().parent / "sample_events.jsonl"
 RESULTS_GLOB = str(ROOT / "evaluation" / "results" / "*.json")
-# Where to look for events files. Override with FOCUSGUARD_DATA_DIR=/some/dir.
-DATA_DIR = Path(os.getenv("FOCUSGUARD_DATA_DIR", ROOT / "data"))
+# Where to look for events files. Override with LOOPHOLE_DATA_DIR=/some/dir.
+DATA_DIR = Path(os.getenv("LOOPHOLE_DATA_DIR", ROOT / "data"))
 
-# Same numbers as focusguard/config.py. Copied (not imported) because config
+# Same numbers as loophole/config.py. Copied (not imported) because config
 # needs python-dotenv and a .env file, which Streamlit Cloud doesn't have.
 RANK_LIMIT = 60
 RANK_THRESHOLD = 10
 STALL_THRESHOLD = 1.0
 
-# Same lists as focusguard/menubar.py: sites and apps that count as distractions.
+# Same lists as loophole/menubar.py: sites and apps that count as distractions.
 DISTRACTION_DOMAINS = (
     "youtube.com", "tiktok.com", "instagram.com", "twitter.com", "x.com",
     "reddit.com", "old.reddit.com", "facebook.com", "netflix.com", "twitch.tv", "hulu.com",
@@ -50,7 +50,7 @@ DISTRACTION_DOMAINS = (
 )
 DISTRACTION_APPS = ("messages", "whatsapp", "discord", "steam", "spotify",
                     "netflix", "tv", "music", "photo booth", "chess")
-NEUTRAL_APPS = {"finder", "loginwindow", "python", "python3", "focus guard",
+NEUTRAL_APPS = {"finder", "loginwindow", "python", "python3", "loophole",
                 "screensaverengine", "usernotificationcenter", "dock"}
 
 KIND_COLOURS = {"work": "#2e9e5b", "distraction": "#d64545", "neutral": "#b0b0b0"}
@@ -291,8 +291,8 @@ def results_page(st) -> None:
 def main() -> None:
     import streamlit as st
 
-    st.set_page_config(page_title="Focus Guard", page_icon="🟢", layout="wide")
-    st.title("Focus Guard")
+    st.set_page_config(page_title="Loophole", page_icon="🟢", layout="wide")
+    st.title("Loophole")
     st.caption("Knows when you stall and where you'll drift.")
 
     # ---- pick a file ----

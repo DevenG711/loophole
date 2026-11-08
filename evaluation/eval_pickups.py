@@ -31,7 +31,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from focusguard import config, nudge, when_score, where_score  # noqa: E402
+from loophole import config, nudge, when_score, where_score  # noqa: E402
 from evaluation.eval_titles import BudgetClient, auc, bootstrap_ci, fmt, make_client  # noqa: E402
 
 HERE = Path(__file__).resolve().parent

@@ -1,4 +1,4 @@
-# Focus Guard evaluation protocol (pre-registered)
+# Loophole evaluation protocol (pre-registered)
 
 We commit this file before we collect or label any data. If we change a rule
 later, we say so in the demo.

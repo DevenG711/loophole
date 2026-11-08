@@ -8,9 +8,9 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 API_KEY = os.getenv("UNBOXAI_API_KEY")
-CATALOG_ID = os.getenv("FOCUSGUARD_CATALOG_ID", "cat_35a0afc5ae400da9f74d27e2")
+CATALOG_ID = os.getenv("LOOPHOLE_CATALOG_ID", "cat_35a0afc5ae400da9f74d27e2")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
-USER = os.getenv("FOCUSGUARD_USER", "me")
+USER = os.getenv("LOOPHOLE_USER", "me")
 
 DATA_DIR = ROOT / "data"
 EVENTS_FILE = DATA_DIR / f"events-{USER}.jsonl"

@@ -3,7 +3,7 @@ distracting app opens (see docs/phone-setup.md). We poll ntfy.sh and write a
 `phone` record for each new message (see events.py).
 
 Run on its own to watch for messages:
-    .venv/bin/python -m focusguard.phone
+    .venv/bin/python -m loophole.phone
 """
 import json
 import threading
@@ -35,7 +35,12 @@ def parse_line(line: str) -> dict | None:
         return None
     if msg.get("event") != "message" or "id" not in msg:
         return None
-    app = (msg.get("message") or "").strip() or "Unknown"
+    app = (msg.get("message") or "").strip()
+    # iOS Shortcuts "Form" body arrives as "app=snapchat": keep just the value.
+    if app.lower().startswith("app="):
+        from urllib.parse import parse_qs
+        app = (parse_qs(app).get("app") or [""])[0].strip()
+    app = app or "Unknown"
     return {"id": msg["id"], "time": float(msg.get("time") or time.time()), "app": app}
 
 

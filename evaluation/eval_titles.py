@@ -12,7 +12,7 @@ own rows on/off BEFORE running this script (see PROTOCOL.md). Compares:
 Prints accuracy and AUC with 95% bootstrap intervals and writes
 evaluation/results/titles.json.
 
-Scoring goes through focusguard/where_score.score(), the same code the app
+Scoring goes through loophole/where_score.score(), the same code the app
 uses. API answers are cached in evaluation/results/where_title_cache.json, so a
 rerun makes no new calls. --max-calls caps live calls (default 100).
 
@@ -33,8 +33,8 @@ from sklearn.metrics import roc_auc_score
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from focusguard import config  # noqa: E402
-from focusguard.catalog import is_distraction  # noqa: E402
+from loophole import config  # noqa: E402
+from loophole.catalog import is_distraction  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 RESULTS = HERE / "results"
@@ -157,7 +157,7 @@ def bgpt_score(title, domain, client):
     """Score one title with the SAME code the app uses (where_score.score).
     Returns dict(rank, share, ...); rank is 0-based (0 = a distraction is the
     top guess). rank None = API failure / over budget."""
-    from focusguard import where_score
+    from loophole import where_score
     recs = work_plus_title(title, domain)
     return where_score.score(recs, t=len(recs) + 1.0, client=client, cache_path=CACHE)
 

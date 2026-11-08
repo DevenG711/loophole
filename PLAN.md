@@ -1,4 +1,4 @@
-# Focus Guard
+# Loophole
 
 **Your keyboard tells us *when* you're about to break. BehaviorGPT tells us *where* you'll go.**
 
@@ -6,7 +6,7 @@ Built for Sundai Club Hack #148, "Behavioral Models: Predict the next action". T
 
 ## The problem
 
-You're working, you slow down, and a few minutes later you're on your phone or YouTube. Blockers only react after you open the app. Focus Guard notices the slowdown first and offers a real break instead.
+You're working, you slow down, and a few minutes later you're on your phone or YouTube. Blockers only react after you open the app. Loophole notices the slowdown first and offers a real break instead.
 
 ## What the user sees
 
@@ -24,17 +24,17 @@ You're working, you slow down, and a few minutes later you're on your phone or Y
 
 | Part | What it does | File |
 |---|---|---|
-| Tracker | Every 2 s: the front app, the browser tab URL and title, idle time, and counts of keys, clicks and scrolls. It never records what you type. It needs no Mac permissions, apart from a one-time prompt to read browser tabs. | `focusguard/tracker.py` |
-| Phone listener | The iPhone Shortcut posts the app name to ntfy.sh. The laptop checks every 10 s. A menu button is the backup. | `focusguard/phone.py` |
-| "When" score | Runs on the laptop. Looks at idle time, typing speed vs your last 10 min, scrolling with no typing, typing bursts followed by long pauses, app switching, and time since your last break. | `focusguard/when_score.py` |
-| "Where" score | Sends the last 8 events (apps, YouTube/Reddit titles, phone opens) to BehaviorGPT. It returns how close a time-waster is in the ranking. | `focusguard/where_score.py` |
-| Nudge rule | Nudges when the stall score is high, a time-waster ranks in the top 10, you were active a moment ago, and there's been no nudge for 20 min. | `focusguard/nudge.py` |
-| Engine | Runs both scores every 30 s and logs the result. | `focusguard/engine.py` |
-| Menu-bar app | Shows the dot, the nudge and the break timer. | `focusguard/menubar.py` |
+| Tracker | Every 2 s: the front app, the browser tab URL and title, idle time, and counts of keys, clicks and scrolls. It never records what you type. It needs no Mac permissions, apart from a one-time prompt to read browser tabs. | `loophole/tracker.py` |
+| Phone listener | The iPhone Shortcut posts the app name to ntfy.sh. The laptop checks every 10 s. A menu button is the backup. | `loophole/phone.py` |
+| "When" score | Runs on the laptop. Looks at idle time, typing speed vs your last 10 min, scrolling with no typing, typing bursts followed by long pauses, app switching, and time since your last break. | `loophole/when_score.py` |
+| "Where" score | Sends the last 8 events (apps, YouTube/Reddit titles, phone opens) to BehaviorGPT. It returns how close a time-waster is in the ranking. | `loophole/where_score.py` |
+| Nudge rule | Nudges when the stall score is high, a time-waster ranks in the top 10, you were active a moment ago, and there's been no nudge for 20 min. | `loophole/nudge.py` |
+| Engine | Runs both scores every 30 s and logs the result. | `loophole/engine.py` |
+| Menu-bar app | Shows the dot, the nudge and the break timer. | `loophole/menubar.py` |
 | Dashboard | Streamlit app, deployed online. | `dashboard/app.py` |
 | Evaluation | The honest tests below. | `evaluation/` |
 
-Shared settings are in `focusguard/config.py`. Every part reads and writes one log format, described in `focusguard/events.py` (`data/events-<user>.jsonl`).
+Shared settings are in `loophole/config.py`. Every part reads and writes one log format, described in `loophole/events.py` (`data/events-<user>.jsonl`).
 
 **What leaves the laptop:** app names, YouTube and Reddit page titles, and phone app names. They go to BehaviorGPT (with `register_event=False`) and to ntfy.sh. Nothing you type is recorded.
 

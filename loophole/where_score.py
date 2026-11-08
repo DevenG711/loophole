@@ -127,7 +127,7 @@ PHONE_APPS = {
 }
 
 # Apps that are not real user activity (screen lock, our own app).
-IGNORE_APPS = {"loginwindow", "screensaverengine", "focus guard", "usernotificationcenter"}
+IGNORE_APPS = {"loginwindow", "screensaverengine", "loophole", "usernotificationcenter"}
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +192,8 @@ def _spec_for_app(rec: dict):
 
 def _spec_for_phone(rec: dict):
     app = (rec.get("app") or "").strip()
+    if app.lower().startswith("app="):  # records saved before phone.py parsed Form bodies
+        app = app[4:].strip()
     item = PHONE_APPS.get(app.lower())
     if item:
         return ("id", item)

@@ -20,7 +20,7 @@ from evaluation import eval_pickups as ep  # noqa: E402
 from evaluation import eval_titles as et  # noqa: E402
 from evaluation import export_titles as ex  # noqa: E402
 from evaluation.fake_data import simulate  # noqa: E402
-from focusguard import when_score  # noqa: E402
+from loophole import when_score  # noqa: E402
 
 
 @pytest.fixture(scope="module")

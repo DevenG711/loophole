@@ -5,8 +5,8 @@ All commands run from the repo root and use the project's virtualenv.
 ## Menu-bar app
 
 ```bash
-.venv/bin/python -m focusguard.menubar          # normal
-.venv/bin/python -m focusguard.menubar --demo   # stage demo
+.venv/bin/python -m loophole.menubar          # normal
+.venv/bin/python -m loophole.menubar --demo   # stage demo
 ```
 
 - A grey dot appears in the menu bar. Click it, then **Start focus session** (25/50/90 min).
@@ -14,7 +14,7 @@ All commands run from the repo root and use the project's virtualenv.
   momentum, "Likely next", last break, **I grabbed my phone** and **Stop session**.
 - `--demo` prints `DEMO MODE IS ON`. It shortens the nudge cooldown to 60 s, lowers
   the thresholds, and adds two menu items: **Demo: score now** and **Demo: show nudge now**.
-- Events go to `data/events-<FOCUSGUARD_USER>.jsonl`.
+- Events go to `data/events-<LOOPHOLE_USER>.jsonl`.
 
 First-time setup on a Mac:
 
@@ -24,9 +24,10 @@ First-time setup on a Mac:
    /usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string "rumps"' .venv/bin/Info.plist
    ```
    Without it, the app falls back to `osascript` notifications, which also work.
-3. The tracker needs **Accessibility** / **Input Monitoring** permission for your
-   terminal (System Settings > Privacy & Security). Browser tab reading asks for
-   **Automation** permission the first time.
+3. Keyboard and mouse counts need no permission. Browser tab reading asks for
+   **Automation** permission the first time a browser is in front during a session.
+   If you missed it: System Settings > Privacy & Security > Automation, then turn
+   on the browser under your terminal (or Cursor/VS Code).
 4. Phone pickups: see [phone-setup.md](phone-setup.md), then use
    **Phone setup > Send test ping** in the menu.
 
@@ -38,7 +39,7 @@ First-time setup on a Mac:
 
 It lists every `data/*.jsonl` file plus `dashboard/sample_events.jsonl` (if present).
 You can also upload a `.jsonl` file in the sidebar. To read files from another folder:
-`FOCUSGUARD_DATA_DIR=/path/to/folder .venv/bin/streamlit run dashboard/app.py`.
+`LOOPHOLE_DATA_DIR=/path/to/folder .venv/bin/streamlit run dashboard/app.py`.
 
 Tabs: **Timeline** (per-session table and the app strip / when / where chart),
 **Results** (reads `evaluation/results/*.json`), **Privacy**.

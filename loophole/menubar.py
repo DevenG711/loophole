@@ -1,4 +1,4 @@
-"""Focus Guard menu-bar app (rumps).
+"""Loophole menu-bar app (rumps).
 
 What it does:
 - Shows a dot in the macOS menu bar. Grey = no session. During a session the
@@ -14,7 +14,7 @@ What it does:
 - During a break the menu-bar title is a countdown. At the end we ask
   "Back to <work app>?" and bring that app to the front with `open -a`.
 
-Run:  .venv/bin/python -m focusguard.menubar [--demo]
+Run:  .venv/bin/python -m loophole.menubar [--demo]
 
 The helpers at the top of this file are plain functions with no rumps import,
 so tests can use them without a GUI.
@@ -59,7 +59,7 @@ DISTRACTION_APPS = ("messages", "whatsapp", "discord", "steam", "spotify",
                     "netflix", "tv", "music", "photo booth", "chess")
 # Apps that are neither work nor distraction; never "go back" to these.
 NEUTRAL_APPS = {
-    "finder", "loginwindow", "python", "python3", "focus guard",
+    "finder", "loginwindow", "python", "python3", "loophole",
     "screensaverengine", "usernotificationcenter", "system settings",
     "notification center", "dock", "spotlight",
 }
@@ -235,7 +235,7 @@ def notify(title: str, subtitle: str, message: str) -> None:
         rumps.notification(title, subtitle, message)
         return
     except Exception as e:
-        print(f"[focusguard] rumps notification failed ({e!s:.60}); using osascript")
+        print(f"[loophole] rumps notification failed ({e!s:.60}); using osascript")
     script = (f'display notification {_osa(message)} with title {_osa(title)} '
               f'subtitle {_osa(subtitle)}')
     subprocess.run(["osascript", "-e", script], check=False)
@@ -257,9 +257,9 @@ def _load(module: str):
     should still open if one of them isn't ready.
     """
     try:
-        return __import__(f"focusguard.{module}", fromlist=[module])
+        return __import__(f"loophole.{module}", fromlist=[module])
     except Exception as e:
-        print(f"[focusguard] {module} unavailable: {e}")
+        print(f"[loophole] {module} unavailable: {e}")
         return None
 
 
@@ -272,9 +272,9 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
     file without a GUI."""
     import rumps
 
-    class FocusGuardApp(rumps.App):
+    class LoopholeApp(rumps.App):
         def __init__(self):
-            super().__init__("Focus Guard", title=IDLE_DOT, quit_button="Quit Focus Guard")
+            super().__init__("Loophole", title=IDLE_DOT, quit_button="Quit Loophole")
             self.demo = demo
             self.path = events_path
             self.cooldown = DEMO_COOLDOWN if demo else config.NUDGE_COOLDOWN
@@ -365,7 +365,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
                 self.end_break()
             if (self.session_start and self.break_end is None and
                     time.time() - self.session_start >= self.session_minutes * 60):
-                notify("Focus Guard", "Session done",
+                notify("Loophole", "Session done",
                        f"You focused for {format_minutes(self.focused_seconds())}. Nice work.")
                 self.stop_session()
             self._refresh_menu()
@@ -397,7 +397,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             for name, job in jobs:
                 threading.Thread(target=self._guarded, args=(name, job), daemon=True,
                                  name=f"fg-{name}").start()
-            print(f"[focusguard] session started: {minutes} min, threads: "
+            print(f"[loophole] session started: {minutes} min, threads: "
                   f"{[n for n, _ in jobs]}")
 
         def _guarded(self, name, job) -> None:
@@ -405,7 +405,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             try:
                 job(self.stop_event)
             except Exception as e:
-                print(f"[focusguard] {name} thread crashed: {e!r}")
+                print(f"[loophole] {name} thread crashed: {e!r}")
 
         def focused_seconds(self) -> float:
             if not self.session_start:
@@ -438,7 +438,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             # Log it here only for nudges the menu bar decided (demo mode).
             if not engine_logged:
                 events.write("nudge", self.path, action="shown")
-            notify("Focus Guard", "Time for a real break?",
+            notify("Loophole", "Time for a real break?",
                    nudge_message(self.view.get("likely", [])))
 
         def on_start_break(self, _item) -> None:
@@ -460,7 +460,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             self._refresh_menu()
             app_name = self.work_app
             if not app_name:
-                notify("Focus Guard", "Break's over", "Time to get back to work.")
+                notify("Loophole", "Break's over", "Time to get back to work.")
                 return
             # A modal alert blocks only the main thread; tracker/engine keep running.
             clicked = rumps.alert(title=f"Back to {app_name}?",
@@ -497,17 +497,17 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
         def on_test_ping(self, _item) -> None:
             phone = _load("phone")
             if not phone or not hasattr(phone, "send_test"):
-                notify("Focus Guard", "Phone setup", "Phone module not ready yet.")
+                notify("Loophole", "Phone setup", "Phone module not ready yet.")
                 return
             # Network call: keep it off the main thread.
             def send():
                 try:
                     ok = phone.send_test(app="Test")
-                    print(f"[focusguard] test ping {'sent' if ok else 'FAILED (check NTFY_TOPIC)'}")
+                    print(f"[loophole] test ping {'sent' if ok else 'FAILED (check NTFY_TOPIC)'}")
                 except Exception as e:
-                    print(f"[focusguard] test ping failed: {e}")
+                    print(f"[loophole] test ping failed: {e}")
             threading.Thread(target=send, daemon=True).start()
-            notify("Focus Guard", "Phone setup",
+            notify("Loophole", "Phone setup",
                    "Test ping sent. It should show up here within ~10 s.")
 
         # ---- demo helpers -----------------------------------------------
@@ -519,7 +519,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
                 try:
                     self.on_score(engine.score_now(path=self.path))
                 except Exception as e:
-                    print(f"[focusguard] score_now failed: {e!r}")
+                    print(f"[loophole] score_now failed: {e!r}")
             threading.Thread(target=run, daemon=True).start()
 
         def on_demo_nudge(self, _item) -> None:
@@ -562,11 +562,11 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
                                     and self.last_break is not None)
             self.start_menu.hidden = in_session
 
-    return FocusGuardApp()
+    return LoopholeApp()
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Focus Guard menu-bar app")
+    parser = argparse.ArgumentParser(description="Loophole menu-bar app")
     parser.add_argument("--demo", action="store_true",
                         help=f"stage demo: {DEMO_COOLDOWN}s nudge cooldown, lower thresholds")
     args = parser.parse_args(argv)
@@ -578,7 +578,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"  rank threshold: {DEMO_RANK_THRESHOLD} (normal {config.RANK_THRESHOLD})")
         print("  extra menu items: 'Demo: score now', 'Demo: show nudge now'")
         print("=" * 60)
-    print(f"[focusguard] writing events to {config.EVENTS_FILE}")
+    print(f"[loophole] writing events to {config.EVENTS_FILE}")
     build_app(demo=args.demo).run()
 
 
