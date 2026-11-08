@@ -5,3 +5,10 @@ __pycache__/
 .pytest_cache/
 data/
 .DS_Store
+
+# Real data outside data/: real watch titles and results from real logs
+evaluation/titles_candidates.csv
+evaluation/results/pickups.json
+evaluation/results/titles.json
+# single-instance lock
+*.lock

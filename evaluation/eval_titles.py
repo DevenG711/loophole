@@ -153,13 +153,29 @@ def work_plus_title(title, domain):
     return recs
 
 
+class _CacheOnly:
+    def complete(self, *a, **kw):
+        raise RuntimeError("cache only")
+
+
 def bgpt_score(title, domain, client):
     """Score one title with the SAME code the app uses (where_score.score).
-    Returns dict(rank, share, ...); rank is 0-based (0 = a distraction is the
-    top guess). rank None = API failure / over budget."""
+    Returns dict(rank, share, ..., rank_tuned); rank is 0-based (0 = a
+    distraction is the top guess). rank None = API failure / over budget.
+
+    rank is the PRE-REGISTERED rank (first d_* item, skip_sticky=False).
+    rank_tuned is the live app's rank (skips STICKY_DISTRACTIONS, tuned
+    in-sample after the protocol was written). Both come from the same cached
+    answer, so the second lookup never calls the API."""
     from loophole import where_score
     recs = work_plus_title(title, domain)
-    return where_score.score(recs, t=len(recs) + 1.0, client=client, cache_path=CACHE)
+    t = len(recs) + 1.0
+    out = where_score.score(recs, t=t, client=client, cache_path=CACHE, skip_sticky=False)
+    out["rank_tuned"] = None
+    if out["rank"] is not None:
+        out["rank_tuned"] = where_score.score(recs, t=t, client=_CacheOnly(), cache_path=CACHE,
+                                              skip_sticky=True)["rank"]
+    return out
 
 
 def make_client():
@@ -173,12 +189,21 @@ def make_client():
 
 # ---------------- main ----------------
 
+def is_example(r):
+    return r["owner"].strip().lower() == "example"
+
+
+def count_real_labels(rows):
+    """Labelled (on|off) rows that are NOT owner=example."""
+    return sum(1 for r in rows if not is_example(r) and r["label"] in ("on", "off"))
+
+
 def load_rows(path, include_examples):
     rows, skipped = [], {"unlabeled": 0, "example": 0}
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
             label = (r.get("label") or "").strip().lower()
-            if r["owner"].strip() == "example" and not include_examples:
+            if is_example(r) and not include_examples:
                 skipped["example"] += 1
                 continue
             if label not in ("on", "off"):
@@ -201,14 +226,19 @@ def evaluate(rows, client, budget):
     # BehaviorGPT: rows where the call failed are left out (n is printed).
     ok = np.array([b is not None for b in bg])
     rank = np.array([b["rank"] if b else np.nan for b in bg], float)
+    rank_t = np.array([b["rank_tuned"] if b and b["rank_tuned"] is not None else np.nan
+                       for b in bg], float)
     share = np.array([b["share"] if b else np.nan for b in bg])
 
     methods = {
         # name: (score where higher = more off-task, 0/1 prediction, rows used)
         "domain rule": (np.array(preds["domain rule"], float), np.array(preds["domain rule"]), np.ones(len(y), bool)),
         "keyword rule": (np.array(preds["keyword rule"], float), np.array(preds["keyword rule"]), np.ones(len(y), bool)),
-        "BehaviorGPT rank": (-rank, (rank <= config.RANK_THRESHOLD).astype(int), ok),
+        "BehaviorGPT rank [pre-registered]": (-rank, (rank <= config.RANK_THRESHOLD).astype(int), ok),
         "BehaviorGPT top-10 share": (share, (share >= 0.5).astype(int), ok),
+        # Not pre-registered: the live app's rank (sticky skip), tuned in-sample.
+        "BehaviorGPT rank [tuned, sticky skip]": (-rank_t, (rank_t <= config.RANK_THRESHOLD).astype(int),
+                                                  ok & ~np.isnan(rank_t)),
     }
     out = {}
     for name, (score, pred, use) in methods.items():
@@ -238,6 +268,7 @@ def evaluate(rows, client, budget):
         "value": d, "ci": bootstrap_ci(diff, len(yy)) if len(yy) else (None, None)}
     per_row = [{"owner": r["owner"], "title": r["title"], "domain": r["domain"],
                 "label": r["label"], "keyword": k, "bgpt_rank": None if b is None else b["rank"],
+                "bgpt_rank_tuned": None if b is None else b["rank_tuned"],
                 "bgpt_share": None if b is None else b["share"]}
                for r, k, b in zip(rows, preds["keyword rule"], bg)]
     return out, per_row
@@ -253,11 +284,17 @@ def main():
     args = ap.parse_args()
 
     rows, skipped = load_rows(args.titles, args.include_examples)
+    n_real = count_real_labels(rows)
     print(f"Titles used: {len(rows)}  (skipped {skipped['unlabeled']} unlabeled, "
           f"{skipped['example']} example rows)")
+    print(f"Real (non-EXAMPLE) labelled titles: {n_real}")
+    headline = n_real > 0 and not args.include_examples
     if not rows:
         print("Nothing to score. Label rows in titles.csv first (on|off).")
         return
+    if n_real == 0:
+        print("NO HEADLINE NUMBER: only made-up EXAMPLE rows are labelled. The numbers below "
+              "test the pipeline only. Label real titles first (see PROTOCOL.md).")
     n_off = sum(r["label"] == "off" for r in rows)
     print(f"Labels: {n_off} off-task, {len(rows) - n_off} on-task")
     if args.include_examples:
@@ -270,21 +307,30 @@ def main():
     res, per_row = evaluate(rows, client, budget)
     print(f"Live API calls this run: {budget['used']} (rest from cache)\n")
 
-    print(f"{'method':<26}{'n':>4}  {'accuracy [95% CI]':<22}{'AUC [95% CI]':<22}")
+    print(f"{'method':<38}{'n':>4}  {'accuracy [95% CI]':<22}{'AUC [95% CI]':<22}")
     for name, r in res.items():
         if name.startswith("_"):
             continue
-        print(f"{name:<26}{r['n']:>4}  {fmt(r['accuracy'], r['accuracy_ci']):<22}"
+        if not r["n"]:
+            print(f"{name:<38}{0:>4}  (no rows with a score)")
+            continue
+        print(f"{name:<38}{r['n']:>4}  {fmt(r['accuracy'], r['accuracy_ci']):<22}"
               f"{fmt(r['auc'], r['auc_ci']):<22}")
     d = res["_diff_bgpt_rank_minus_keyword_auc"]
-    print(f"\nAUC difference, BehaviorGPT rank minus keyword rule (paired): "
+    print(f"\nAUC difference, BehaviorGPT rank [pre-registered] minus keyword rule (paired): "
           f"{fmt(d['value'], d['ci'])}")
     print("Accuracy thresholds (pre-registered, same as the app): rank <= "
           f"{config.RANK_THRESHOLD} = off; share >= 0.5 = off. Ranks are 0-based.")
     print(f"Context: work history with no title gives rank {base['rank']}, share {base['share']}.")
+    print("[pre-registered] is the headline. [tuned, sticky skip] is the live app's rank: it skips "
+          f"{sorted(config.STICKY_DISTRACTIONS)}, a rule tuned in-sample on our own pickup log after "
+          "the protocol was written, so it is shown for reference only.")
+    if not headline:
+        print("NOT A RESULT: no headline number (EXAMPLE rows only, or --include-examples).")
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     out = {"n": len(rows), "n_off": n_off, "includes_examples": args.include_examples,
+           "n_real_labels": n_real, "headline": headline,
            "skipped": skipped, "live_calls": budget["used"], "methods": res, "rows": per_row,
            "work_history_items": base["items_sent"],
            "work_only_rank": base["rank"], "work_only_share": base["share"]}

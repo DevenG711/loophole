@@ -149,18 +149,25 @@ def simulate(person: str, hours: float, seed: int, start_ts: float = START_TS) -
 
 def add_scores(recs: list[dict]) -> list[dict]:
     """For the dashboard sample only: add `score` records every 30 s using the
-    real when_score and nudge code if they exist. No API calls (where = None)."""
+    real when_score and nudge code if they exist. No API calls (where = None).
+
+    Nudges use nudge.decide_when_where (the old stall rule; with where = None it
+    needs a strong stall). The live rule (nudge.decide) fires only on pickup-
+    memory text, which needs PRECURSOR_MIN_EPISODES real pickups and a lift that
+    a 1-hour fake sample rarely reaches, so the sample would show no nudges.
+    The memory is not simulated: these score records have no memory field."""
     try:
         from loophole import nudge, when_score
     except ImportError:
         return recs
+    rule = getattr(nudge, "decide_when_where", None) or nudge.decide
     out, last_nudge = list(recs), None
     t = recs[1]["ts"] + 60
     while t < recs[-1]["ts"]:
         past = [r for r in recs if r["ts"] < t and r["kind"] != "phone"]
         f = when_score.features(past, t)
         w = when_score.stall_score(f)
-        fire, _ = nudge.decide(w, None, f.get("active_recent", False), last_nudge, t)
+        fire, _ = rule(w, None, f.get("active_recent", False), last_nudge, t)
         if fire:
             last_nudge = t
         out.append({"ts": t, "kind": "score", "when": w, "features": f,

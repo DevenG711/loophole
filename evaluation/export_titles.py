@@ -12,11 +12,22 @@ sample of --max titles is taken, so you do not pick the easy ones.
 Privacy: these are your real titles. Before labeling, delete any row you do not
 want to share. Never delete rows after you have seen scores.
 
+Also reads Loophole's own logs (--events data/events-*.jsonl): `app` records
+whose URL is a YouTube video or Reddit post. Use --no-browser to read only the
+logs. Everything here is local; nothing is sent anywhere.
+
+Unlabeled candidates can go to a separate file first (--out
+evaluation/titles_candidates.csv); they are also deduped against titles.csv.
+Humans label; this script never fills in a label.
+
 Usage:
   python evaluation/export_titles.py --owner alice --days 14 --max 35
+  python evaluation/export_titles.py --owner deven --events data/events-deven.jsonl \
+      --out evaluation/titles_candidates.csv
 """
 import argparse
 import csv
+import json
 import random
 import shutil
 import sqlite3
@@ -92,9 +103,27 @@ def read_safari(path: Path, since_unix: float) -> list[tuple[str, str]]:
     return rows
 
 
-def collect(chrome_files, safari_files, days) -> list[dict]:
+def read_events(path: Path, since_unix: float) -> list[tuple[str, str]]:
+    """(url, title) from `app` records in a Loophole JSONL log."""
+    pairs = []
+    with Path(path).open() as f:
+        for line in f:
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            if r.get("kind") == "app" and r.get("url") and r["ts"] >= since_unix:
+                pairs.append((r["url"], r.get("title") or ""))
+    return pairs
+
+
+def collect(chrome_files, safari_files, days, event_files=()) -> list[dict]:
     since = time.time() - days * 86400
     pairs = []
+    for f in event_files:
+        try:
+            pairs += read_events(Path(f), since)
+        except Exception as e:
+            print(f"skip log {f}: {e}")
     for f in chrome_files:
         try:
             pairs += read_chrome(Path(f), since)
@@ -116,11 +145,13 @@ def collect(chrome_files, safari_files, days) -> list[dict]:
     return out
 
 
-def append_rows(csv_path: Path, owner: str, found: list[dict], max_n: int, seed: int) -> int:
+def append_rows(csv_path: Path, owner: str, found: list[dict], max_n: int, seed: int,
+                also_dedupe=()) -> int:
     existing = set()
-    if csv_path.exists():
-        with csv_path.open(newline="") as f:
-            existing = {r["title"].strip().lower() for r in csv.DictReader(f)}
+    for p in [csv_path, *map(Path, also_dedupe)]:
+        if p.exists():
+            with p.open(newline="") as f:
+                existing |= {r["title"].strip().lower() for r in csv.DictReader(f)}
     new = [r for r in found if r["title"].lower() not in existing]
     random.Random(seed).shuffle(new)
     new = new[:max_n]
@@ -143,12 +174,19 @@ def main():
     ap.add_argument("--out", default=str(HERE / "titles.csv"))
     ap.add_argument("--chrome", nargs="*", help="Chrome History files (default: all profiles)")
     ap.add_argument("--safari", nargs="*", help="Safari History.db files (default: ~/Library/Safari)")
+    ap.add_argument("--events", nargs="*", default=[], help="Loophole JSONL logs to read titles from")
+    ap.add_argument("--no-browser", action="store_true", help="read only --events, not Chrome/Safari")
     args = ap.parse_args()
 
-    chrome = args.chrome if args.chrome is not None else [str(p) for p in CHROME_GLOB.glob("*/History")]
-    safari = args.safari if args.safari is not None else ([str(SAFARI_DB)] if SAFARI_DB.exists() else [])
-    found = collect(chrome, safari, args.days)
-    n = append_rows(Path(args.out), args.owner, found, args.max, args.seed)
+    if args.no_browser:
+        chrome, safari = [], []
+    else:
+        chrome = args.chrome if args.chrome is not None else [str(p) for p in CHROME_GLOB.glob("*/History")]
+        safari = args.safari if args.safari is not None else ([str(SAFARI_DB)] if SAFARI_DB.exists() else [])
+    found = collect(chrome, safari, args.days, args.events)
+    main_csv = HERE / "titles.csv"
+    also = [main_csv] if Path(args.out).resolve() != main_csv.resolve() else []
+    n = append_rows(Path(args.out), args.owner, found, args.max, args.seed, also_dedupe=also)
     print(f"Found {len(found)} distinct titles; added {n} rows for {args.owner} to {args.out}.")
     print("Next: delete rows you won't share, then fill `label` with on|off BEFORE running eval_titles.py.")
 
