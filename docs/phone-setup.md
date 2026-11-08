@@ -10,7 +10,10 @@ Your topic is set as `NTFY_TOPIC` in `.env`, for example
 `loophole-k7q2x9m4p1`. Use the same name on the phone.
 
 **Keep it random.** Anyone who knows the topic name can read it and post to it.
-Do not use your name or anything easy to guess.
+Do not use your name or anything easy to guess. Use 20+ random characters
+(for example `python3 -c "import secrets; print('loophole-' + secrets.token_urlsafe(16))"`);
+the app prints a warning if the topic is shorter. Free ntfy.sh topics have no
+password, so the name is the only protection: a fake post becomes a fake pickup.
 
 ## 2. Make the automation
 
@@ -39,8 +42,10 @@ The laptop only needs the app name as plain text, for example `Instagram`.
 1. In the automation, tap the play button to run it once by hand.
 2. If iOS asks "Allow ... to connect to ntfy.sh?", tap **Always Allow**.
    Without this, it will ask every time and the automation will not run silently.
-3. Open Instagram (or any app you picked). The Loophole setup screen should
-   show the pickup within about 10 seconds.
+3. On the laptop, start a focus session in Loophole (the phone listener only
+   runs during a session). Open Instagram (or any app you picked) on the phone.
+   Click the menu-bar dot: the **Last phone** line should change to
+   "Last phone: Instagram, 0 min ago" within about 10 seconds.
 
 You can also open `https://ntfy.sh/<NTFY_TOPIC>` in a browser to see the
 messages arrive.

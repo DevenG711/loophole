@@ -12,11 +12,12 @@ You're working, you slow down, and a few minutes later you're on your phone or Y
 
 1. **Setup (5 min).** Install the Mac menu-bar app. On the iPhone, add one Shortcut that pings the laptop when Instagram, TikTok, YouTube, X, Reddit or Snapchat opens ([docs/phone-setup.md](docs/phone-setup.md)).
 2. **Start a session.** Click the menu-bar dot → Start focus session (25 / 50 / 90 min).
-3. **While working.** Nothing pops up. The dot changes colour:
-   - green: working well
-   - amber: slowing down, or heading toward a time-waster
-   - red: both, so a nudge is coming
-4. **Nudge** (at most once per 20 min): "You've slowed down, and Instagram looks like your next move. Take a 5-minute break instead?" The buttons are **Start break**, **I'm fine** and **I grabbed my phone**.
+3. **While working.** The dot changes colour:
+   - green: nothing here looks like the minutes before your past pickups
+   - amber: the pickup memory recognises this moment, but a nudge is blocked (cooldown, or you just came back)
+   - red: a nudge is coming
+   Opening a listed laptop distraction (YouTube, LinkedIn, news sites, Messages) shows a "Distraction detected" panel straight away.
+4. **Nudge** (at most once per 20 min, only after 5+ real pickups): "This looks like the minutes before your past phone pickups. Instagram looks like your next move. Take a 5-minute break instead?" The buttons are **Start break**, **I'm fine** and **I grabbed my phone**.
 5. **Break timer.** A countdown runs, then "Back to VS Code?" brings your work app back.
 6. **Web dashboard.** A timeline of the session: apps used, the slowdown score, where BehaviorGPT thought you were heading, nudges, and real phone pickups.
 
@@ -28,7 +29,8 @@ You're working, you slow down, and a few minutes later you're on your phone or Y
 | Phone listener | The iPhone Shortcut posts the app name to ntfy.sh. The laptop checks every 10 s. A menu button is the backup. | `loophole/phone.py` |
 | "When" score | Runs on the laptop. Looks at idle time, typing speed vs your last 10 min, scrolling with no typing, typing bursts followed by long pauses, app switching, and time since your last break. | `loophole/when_score.py` |
 | "Where" score | Sends the last 8 events (apps, YouTube/Reddit titles, phone opens) to BehaviorGPT. It returns how close a time-waster is in the ranking. | `loophole/where_score.py` |
-| Nudge rule | Nudges when the stall score is high, a time-waster ranks in the top 10, you were active a moment ago, and there's been no nudge for 20 min. | `loophole/nudge.py` |
+| Pickup memory | Keeps a snapshot of the minute before each real pickup and checks whether now looks like one. Matches on the stall score, BehaviorGPT's lean to distraction (from laptop apps only), time on one window, app switching and typing/scrolling trends. Speaks only after 5 pickups, and only if similar past moments led to a pickup at least 2x as often as usual. | `loophole/precursor.py` |
+| Nudge rule | Nudges only when the pickup memory speaks up, you were active a moment ago, and there's been no nudge for 20 min. (The first rule, "stall high and a time-waster in the top 10", is kept only as an eval row.) | `loophole/nudge.py` |
 | Engine | Runs both scores every 30 s and logs the result. | `loophole/engine.py` |
 | Menu-bar app | Shows the dot, the nudge and the break timer. | `loophole/menubar.py` |
 | Dashboard | Streamlit app, deployed online. | `dashboard/app.py` |
@@ -47,6 +49,14 @@ Shared settings are in `loophole/config.py`. Every part reads and writes one log
 - **Page titles.** On the same site, tutorial titles score like coding (0.16), and prank or vlog titles score 0.74. App names alone can't tell them apart.
 - **Phone opens.** A recent phone app open in the history moves the first time-waster from about 23rd to 1st.
 - **What BehaviorGPT can't see.** It does **not** see stalling, time gaps or time of day. Fake "idle" items moved the rank no more than random items did. That's why the "when" score is computed locally. We say so on stage.
+
+### What our real data says (2026-11-08, one person, one session, 12 pickups)
+
+- Nothing beat elapsed time. Clock time alone scored AUC 0.73; the pickup memory 0.63; BehaviorGPT's rank 0.50; the stall score 0.36. Pickups got more frequent later on. On moments after the first pickup, the memory drops to 0.45 (chance). See `evaluation/results/pickups.json`.
+- Before pickups the user looked *focused*, not stalled: longer on one window, faster typing, fewer app switches.
+- Some pickups were probably us testing the phone Shortcut (the ntfy.sh page was open nearby).
+- Titles (claim 1): 14 real YouTube/Reddit titles, 9 off-task and 5 on-task. AUC: BehaviorGPT rank 0.64 [0.23, 1.00], keyword rule 0.54, site rule 0.50. BehaviorGPT's accuracy at the pre-registered cut (rank <= 10 = off-task) is only 0.36: most off-task titles land at rank 12-20. See `evaluation/results/titles.json`.
+- The live nudge (memory-only) has not fired on real data yet.
 
 ## How we test it honestly
 
@@ -72,7 +82,7 @@ The full rules are in [evaluation/PROTOCOL.md](evaluation/PROTOCOL.md). We commi
 ## Demo (2–3 min)
 
 1. The problem, in one sentence.
-2. Tutorial vs prank on YouTube. The site rule flags the tutorial, and our line stays green.
-3. Replay a real afternoon: typing drops, the score rises, and a real phone pickup follows.
+2. Tutorial vs prank on YouTube. Open a tutorial: the "Distraction detected" panel appears (a site rule can't tell them apart), and one click on **This is work** clears it for that video only. Then show the titles result: on 14 real titles, BehaviorGPT ranked them a bit better than the rules (AUC 0.64 vs 0.54), but n is far too small to call it a win.
+3. Replay the real session on the dashboard: what came before each pickup. Say what we found: the user looked *focused*, not stalled, and nothing beat elapsed time.
 4. The results table, including one miss and one slide on "what BehaviorGPT can't see".
 5. A live, staged nudge. We say on stage that it's staged.
