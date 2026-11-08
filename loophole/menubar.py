@@ -9,8 +9,13 @@ What it does:
 - The engine calls `on_score` from ITS thread. rumps UI is not thread-safe, so
   `on_score` only stores the score. A 1-second rumps.Timer on the main thread
   picks it up and updates the dot and the menu.
-- When a nudge fires (at most once per cooldown), we send a notification and
-  show three action items in the menu: Start break, I'm fine, I grabbed my phone.
+- When a nudge fires (at most once per cooldown), we pop up an alert with
+  three choices: take a break, I'm fine, I picked up my phone. The same three
+  actions also stay in the menu while the nudge is active. The dot is red
+  while a nudge is active.
+- When the front app or tab is a distraction (DISTRACTION_DOMAINS/APPS), the
+  island pins open: "Distraction detected. Put it away, take a walk" with an
+  "I'm back" button. The time until "I'm back" counts as break time.
 - During a break the menu-bar title is a countdown. At the end we ask
   "Back to <work app>?" and bring that app to the front with `open -a`.
 
@@ -36,9 +41,12 @@ from . import catalog, config, events
 SESSION_LENGTHS = (25, 50, 90)  # minutes offered in the menu
 
 # Demo mode: the stage demo can't wait 20 minutes for a second nudge.
-DEMO_COOLDOWN = 60          # seconds between nudges in demo mode
-DEMO_STALL_THRESHOLD = 0.3  # lower "when" threshold (normal: config.STALL_THRESHOLD)
-DEMO_RANK_THRESHOLD = 25    # looser "where" threshold (normal: config.RANK_THRESHOLD)
+# Not shorter: the demo thresholds sit below the median stall, so a 60 s gap
+# re-nudged right after "I'm fine".
+DEMO_COOLDOWN = config.DEMO_COOLDOWN     # seconds between nudges in demo mode
+# Demo mode nudges on ANY close pickup-memory match (normally the match must
+# also beat the base rate by PRECURSOR_MIN_LIFT, after PRECURSOR_MIN_EPISODES).
+DEMO_MIN_EPISODES = 1
 
 DOTS = {"green": "🟢", "amber": "🟡", "red": "🔴"}
 IDLE_DOT = "⚪"
@@ -99,6 +107,50 @@ def app_kind(rec: dict) -> str:
     return "work"
 
 
+PHONE_APP_NAMES = {"tiktok": "TikTok", "youtube": "YouTube", "whatsapp": "WhatsApp",
+                   "linkedin": "LinkedIn", "imessage": "iMessage", "x": "X"}
+# A phone pickup older than this (e.g. backfilled at session start) is history,
+# not something happening now: don't pop up for it.
+PHONE_DISTRACTION_MAX_AGE_S = 120
+
+
+def phone_triggers_distraction(rec: dict, now: float) -> bool:
+    """Should this phone record open the 'Distraction detected' screen?
+    Not test pings, not the user's own 'Grabbed phone' button, not old ones."""
+    return (rec.get("kind", "phone") == "phone"
+            and rec.get("source") not in ("test", "button")
+            and now - rec.get("ts", 0) <= PHONE_DISTRACTION_MAX_AGE_S)
+
+
+def distraction_name(rec: dict) -> str:
+    """'youtube.com', 'Messages' or 'TikTok on your phone': what to call the
+    distraction on screen."""
+    if rec.get("kind") == "phone":
+        app = (rec.get("app") or "").strip()
+        nice = PHONE_APP_NAMES.get(app.lower(), app[:1].upper() + app[1:])
+        return f"{nice} on your phone" if nice and nice.lower() != "unknown" else "your phone"
+    domain = (rec.get("domain") or "").lower().removeprefix("www.").removeprefix("m.")
+    return domain or rec.get("app") or "a distraction"
+
+
+# Sites where one page can be work and the next one not (a tutorial vs a
+# prank video): "This is work" allows only that page title, not the site.
+PER_TITLE_DOMAINS = ("youtube.com", "reddit.com", "old.reddit.com")
+
+
+def work_key(rec: dict) -> str | None:
+    """What "This is work" allows for the rest of the session: one YouTube or
+    Reddit page (by title), or a whole other site or app. None for phone
+    pickups (the laptop can't vouch for those)."""
+    if rec.get("kind") == "phone":
+        return None
+    domain = (rec.get("domain") or "").lower().removeprefix("www.").removeprefix("m.")
+    if domain in PER_TITLE_DOMAINS:
+        title = (rec.get("title") or "").strip()
+        return f"{domain}|{title}" if title else None
+    return domain or (rec.get("app") or "").lower() or None
+
+
 def last_work_app(app_records: list[dict]) -> str | None:
     """Name of the most recent app the user was working in (for `open -a`)."""
     for rec in reversed(app_records):
@@ -108,12 +160,17 @@ def last_work_app(app_records: list[dict]) -> str | None:
 
 
 def colour_for(score: dict | None, stall: float = config.STALL_THRESHOLD,
-               rank: int = config.RANK_THRESHOLD) -> str:
-    """Dot colour. Uses the engine's colour if it sent a valid one.
+               rank: int = config.NUDGE_RANK_THRESHOLD, nudge_active: bool = False) -> str:
+    """Dot colour. Red while a nudge is on screen (also demo nudges, which the
+    engine does not know about). Otherwise the engine's colour if it sent a
+    valid one.
 
-    Fallback: red if it wants a nudge, amber if either signal is half-way
-    there, otherwise green.
+    Fallback (same rule as engine.colour_for): red if it wants a nudge; amber
+    if stalling, or if a distraction is very likely next AND the user is
+    half-way to a stall; otherwise green.
     """
+    if nudge_active:
+        return "red"
     if not score:
         return "green"
     if score.get("colour") in DOTS:
@@ -122,7 +179,9 @@ def colour_for(score: dict | None, stall: float = config.STALL_THRESHOLD,
         return "red"
     when = score.get("when") or 0.0
     where_rank = score.get("where_rank")
-    if when >= stall / 2 or (where_rank is not None and where_rank <= rank * 2):
+    if when >= stall:
+        return "amber"
+    if where_rank is not None and where_rank <= rank and when >= stall / 2:
         return "amber"
     return "green"
 
@@ -134,10 +193,9 @@ def wants_nudge(score: dict | None, demo: bool = False) -> bool:
     if score.get("nudge"):
         return True
     if demo:
-        when = score.get("when") or 0.0
-        where_rank = score.get("where_rank")
-        return when >= DEMO_STALL_THRESHOLD and where_rank is not None \
-            and where_rank <= DEMO_RANK_THRESHOLD
+        memory = score.get("memory") or {}
+        return bool(memory.get("matches")) and \
+            (memory.get("n_episodes") or 0) >= DEMO_MIN_EPISODES
     return False
 
 
@@ -211,16 +269,136 @@ def friendly_names(top_ids: list[str], explain=None, limit: int = 2) -> list[str
 
 
 def nudge_message(likely: list[str]) -> str:
+    """The nudge text. The live trigger is the pickup memory (nudge.decide),
+    so say that, not "you've slowed down" (the stall score no longer decides)."""
+    base = "This looks like the minutes before your past phone pickups."
     if likely:
-        return (f"You've slowed down, and {likely[0]} looks like your next move. "
+        return (f"{base} {likely[0]} looks like your next move. "
                 f"Take a {config.BREAK_MINUTES}-minute break instead?")
-    return f"You've slowed down. Take a {config.BREAK_MINUTES}-minute break instead?"
+    return f"{base} Take a {config.BREAK_MINUTES}-minute break instead?"
+
+
+def memory_status(memory: dict | None) -> str:
+    """'Pickup memory: learned from 7 pickups' or '...: 2 of 5 pickups needed'."""
+    if not memory:
+        return "Pickup memory: -"
+    n = memory.get("n_episodes") or 0
+    if memory.get("ready"):
+        return f"Pickup memory: learned from {n} pickup{'s' if n != 1 else ''}"
+    return f"Pickup memory: {n} of {config.PRECURSOR_MIN_EPISODES} pickups needed"
+
+
+def with_memory(message: str, memory_text: str) -> str:
+    """Add the pickup-memory sentence to a nudge message, if there is one."""
+    return f"{message}\n\n{memory_text}" if memory_text else message
+
+
+# Nudge alert buttons. rumps.alert returns 1 for ok, 0 for cancel, -1 for other.
+NUDGE_CHOICES = {1: "break", 0: "dismiss", -1: "phone"}
+
+
+def nudge_choice(clicked) -> str:
+    """rumps.alert return value -> nudge action. Anything odd counts as dismiss."""
+    return NUDGE_CHOICES.get(clicked, "dismiss")
+
+
+def nudge_record(action: str, staged: bool = False) -> dict:
+    """Fields for a `nudge` record. Staged (demo button) nudges are marked so
+    the dashboard and evals can leave them out."""
+    fields = {"action": action}
+    if staged:
+        fields["staged"] = True
+    return fields
+
+
+def last_phone_text(rec: dict | None, now: float) -> str:
+    """'Last phone: Instagram, 2 min ago'. Test pings are labelled."""
+    if not rec:
+        return "Last phone: none yet"
+    app = rec.get("app") or "Unknown"
+    if rec.get("source") == "test":
+        app += " (test ping)"
+    return f"Last phone: {app}, {format_minutes(now - rec['ts'])} ago"
 
 
 def last_break_text(last_break_ts: float | None, now: float) -> str:
     if last_break_ts is None:
         return "Last break: none yet"
     return f"Last break: {format_minutes(now - last_break_ts)} ago"
+
+
+# Amber = the pickup memory recognises this moment but can't nudge now
+# (cooldown, or you just came back): see engine.colour_for.
+ISLAND_HEADLINES = {"green": "In the flow", "amber": "Looks like before a pickup",
+                    "red": "Time for a real break?"}
+
+
+def island_view(*, in_session: bool, on_break: bool, colour: str, nudge_active: bool,
+                back_prompt: bool, focused_s: float, session_min: int,
+                remaining_s: float, break_left_s: float, bars: list[int],
+                likely: list[str], reason: str, work_app: str | None,
+                momentum: str = "", memory_text: str = "",
+                distraction: str | None = None, can_mark_work: bool = False) -> dict:
+    """What the notch island shows. Pure, so tests can check it.
+
+    Keys: colour, value (collapsed: dot + timer), headline, sub, progress,
+    details, bars, buttons [(id, title, primary)], pinned (stay open), pulse.
+    """
+    work = work_app or "work"
+    if back_prompt:
+        return {"colour": "blue", "value": "", "pinned": True,
+                "headline": f"Back to {work}?", "sub": "Your break is over. Nice reset.",
+                "buttons": [("back", f"Back to {work}", True), ("not_yet", "Not yet", False)]}
+    if distraction and in_session and not on_break:
+        return {"colour": "red", "value": "", "pinned": True, "pulse": True,
+                "headline": "Distraction detected",
+                "sub": (f"You opened {distraction}. Put it away, take a short walk "
+                        "or get some water, and press the button when you're back."),
+                "details": ["This time counts as a break, not a slip."],
+                "buttons": [("im_back", "I'm back", True)]
+                + ([("is_work", "This is work", False)] if can_mark_work else [])}
+    if not in_session:
+        return {"colour": "grey", "value": "",
+                "headline": "Ready to focus", "sub": "Pick a session length to start.",
+                "buttons": [(f"start:{m}", f"{m} min", m == SESSION_LENGTHS[0])
+                            for m in SESSION_LENGTHS]}
+    if on_break:
+        return {"colour": "blue", "value": format_countdown(break_left_s),
+                "headline": "On a break",
+                "sub": f"{format_countdown(break_left_s)} left. Stand up, look away, drink water.",
+                "progress": 1 - break_left_s / (config.BREAK_MINUTES * 60),
+                "buttons": [("stop", "End session", False)]}
+    if nudge_active:
+        colour = "red"
+    progress = focused_s / (session_min * 60) if session_min else None
+    view = {"colour": colour,
+            "value": format_countdown(remaining_s),
+            "headline": ISLAND_HEADLINES.get(colour, "In the flow"),
+            "sub": (f"Focused {format_minutes(focused_s)} of {session_min} min · "
+                    f"{format_countdown(remaining_s)} left"),
+            "progress": progress, "bars": bars, "pinned": nudge_active,
+            "pulse": nudge_active}
+    details = []
+    if momentum and not momentum.endswith("no typing yet"):
+        details.append(momentum.split("  ", 1)[-1].capitalize())
+    # While green, "likely next" and the nudge rule's reason only confuse
+    # ("TikTok next" while typing 3x faster). Show them when something is up.
+    if likely and colour != "green":
+        details.append("Likely next: " + ", ".join(likely))
+    if reason and not nudge_active and colour != "green":
+        details.append(reason)
+    # The pickup memory is a memory, not an alarm: show it even while green.
+    if memory_text:
+        details.append("Heads-up: " + memory_text)
+    view["details"] = details
+    if nudge_active:
+        view["sub"] = nudge_message(likely)
+        view["buttons"] = [("break", f"{config.BREAK_MINUTES}-min break", True),
+                           ("fine", "I'm fine", False), ("phone", "Grabbed phone", False)]
+    else:
+        view["buttons"] = [("break", "Take a break", False),
+                           ("phone", "Grabbed phone", False), ("stop", "Stop", False)]
+    return view
 
 
 # ---------------------------------------------------------------------------
@@ -267,14 +445,16 @@ def _load(module: str):
 # The app
 # ---------------------------------------------------------------------------
 
-def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
+def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
+              island: bool = True):
     """Create the rumps App. rumps is imported here so tests can import this
     file without a GUI."""
     import rumps
 
     class LoopholeApp(rumps.App):
         def __init__(self):
-            super().__init__("Loophole", title=IDLE_DOT, quit_button="Quit Loophole")
+            # Our own Quit item, so quitting logs "session stop" first.
+            super().__init__("Loophole", title=IDLE_DOT, quit_button=None)
             self.demo = demo
             self.path = events_path
             self.cooldown = DEMO_COOLDOWN if demo else config.NUDGE_COOLDOWN
@@ -288,11 +468,24 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             self.last_break: float | None = None
             self.last_nudge: float | None = None
             self.nudge_active = False
+            self.nudge_staged = False       # active nudge came from the demo button
             self.work_app: str | None = None
             self.score: dict | None = None
             self.view: dict = {}            # momentum + likely names
             self._latest: tuple[dict, dict] | None = None
             self._lock = threading.Lock()
+            self._last_phone: dict | None = None   # written by the phone thread
+            self.back_prompt = False        # island is asking "Back to <app>?"
+            self.distraction: dict | None = None   # app record we're asking about
+            self.distraction_since: float | None = None
+            self._pending_distraction: dict | None = None   # from the tracker thread
+            self.work_ok: set[str] = set()  # "This is work" answers, this session
+            self._seen_app: dict | None = None
+            phone = _load("phone")
+            try:
+                self._last_phone = phone.last_pickup(self.path) if phone else None
+            except Exception:
+                self._last_phone = None
 
             # Info lines (no callback = greyed out, read-only)
             self.i_focused = rumps.MenuItem("Not in a session")
@@ -300,6 +493,8 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             self.i_likely = rumps.MenuItem("Likely next: -")
             self.i_break = rumps.MenuItem("Last break: none yet")
             self.i_reason = rumps.MenuItem("")   # engine's plain-English reason
+            self.i_phone = rumps.MenuItem("Last phone: none yet")
+            self.i_memory = rumps.MenuItem("Pickup memory: -")
             # Nudge actions, only visible while a nudge is active
             self.n_header = rumps.MenuItem("Nudge: take a break?")
             self.n_break = rumps.MenuItem(f"Start {config.BREAK_MINUTES}-min break",
@@ -322,13 +517,24 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             setup.add(rumps.MenuItem("Send test ping", callback=self.on_test_ping))
 
             items = [self.i_focused, self.i_momentum, self.i_likely, self.i_break,
-                     self.i_reason, None, self.n_header, self.n_break, self.n_fine, self.back,
+                     self.i_phone, self.i_memory, self.i_reason, None, self.n_header, self.n_break, self.n_fine, self.back,
                      self.phone_item, self.stop_item, None, self.start_menu, setup]
             if demo:
                 items += [None,
                           rumps.MenuItem("Demo: score now", callback=self.on_demo_score),
-                          rumps.MenuItem("Demo: show nudge now", callback=self.on_demo_nudge)]
+                          rumps.MenuItem("Demo: show nudge now", callback=self.on_demo_nudge),
+                          rumps.MenuItem("Demo: show distraction", callback=self.on_demo_distraction)]
+            items += [None, rumps.MenuItem("Quit Loophole", callback=self.on_quit)]
             self.menu = items
+
+            # Notch island (always on top). If it fails, we fall back to alerts.
+            self.island = None
+            if island:
+                try:
+                    from .island import Island
+                    self.island = Island(self.on_island)
+                except Exception as e:
+                    print(f"[loophole] island unavailable: {e!r}")
             self._refresh_menu()
 
             # Main-thread tick: applies the latest score and runs the break timer
@@ -340,25 +546,58 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             """Called by the engine on ITS thread. Do the slow file reading
             here, then hand the result to the main thread via _latest."""
             now = time.time()
+            bars: list[int] = []
             try:
                 inputs = list(events.read(self.path, kinds={"input"}, before=now + 1))
-                momentum = momentum_text(activity_per_minute(inputs[-400:], now))
+                bars = activity_per_minute(inputs[-400:], now)
+                momentum = momentum_text(bars)
             except Exception:
                 momentum = "Momentum: -"
-            where = _load("where_score")
-            likely = friendly_names(score.get("top") or [],
-                                    getattr(where, "explain", None))
+            # BehaviorGPT's "app pulling at you": named only when the pull is
+            # strong (where_score.WHERE_PULL_MIN_Z), so no fixed-favourite noise.
+            # The z value stays on the dashboard; users get the app name only.
+            if score.get("pull_name"):
+                likely = [score["pull_name"]]
+            else:
+                likely = []
+            memory = score.get("memory") or None
             with self._lock:
-                self._latest = (score, {"momentum": momentum, "likely": likely,
-                                        "reason": score.get("reason") or ""})
+                self._latest = (score, {"momentum": momentum, "likely": likely, "bars": bars,
+                                        "reason": score.get("reason") or "",
+                                        "memory_status": memory_status(memory),
+                                        "memory_text": (memory or {}).get("text")
+                                        or (self.demo and (memory or {}).get("match_text")) or ""})
+
+        def on_tracker_tick(self, t) -> None:
+            """Called by the tracker thread every sample. Flags a newly opened
+            distraction; the main-thread tick shows it."""
+            rec = t.last_app
+            if rec is None or rec is self._seen_app:
+                return
+            self._seen_app = rec
+            if app_kind(rec) == "distraction" and work_key(rec) not in self.work_ok:
+                with self._lock:
+                    self._pending_distraction = rec
+
+        def on_phone_record(self, rec: dict) -> None:
+            """Called by the phone thread for each record it writes."""
+            with self._lock:
+                if self._last_phone is None or rec["ts"] >= self._last_phone["ts"]:
+                    self._last_phone = rec
+                if phone_triggers_distraction(rec, time.time()):
+                    self._pending_distraction = rec
 
         def tick(self, _timer) -> None:
             with self._lock:
                 latest, self._latest = self._latest, None
+                pending, self._pending_distraction = self._pending_distraction, None
+            if (pending and self.session_start and self.break_end is None
+                    and not self.distraction and not self.back_prompt):
+                self.show_distraction(pending)
             if latest and self.session_start:
                 self.score, self.view = latest
                 if (wants_nudge(self.score, self.demo) and self.break_end is None
-                        and not self.nudge_active
+                        and not self.nudge_active and not self.distraction
                         and cooldown_over(self.last_nudge, time.time(), self.cooldown)):
                     self.show_nudge(engine_logged=bool(self.score.get("nudge")))
             if self.break_end is not None and time.time() >= self.break_end:
@@ -382,15 +621,22 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             self.break_seconds = 0.0
             self.last_break = self.last_nudge = None
             self.score, self.view = None, {}
+            self.distraction = self.distraction_since = None
+            self._seen_app = None
+            self.work_ok = set()
+            with self._lock:
+                self._pending_distraction = None
             self.stop_event = threading.Event()
             events.write("session", self.path, action="start", minutes=minutes)
 
             tracker, phone, engine = _load("tracker"), _load("phone"), _load("engine")
             jobs = []
             if tracker and hasattr(tracker, "Tracker"):
-                jobs.append(("tracker", lambda s: tracker.Tracker(path=self.path).run(s)))
+                jobs.append(("tracker", lambda s: tracker.Tracker(path=self.path).run(
+                    s, on_tick=self.on_tracker_tick)))
             if phone and hasattr(phone, "run"):
-                jobs.append(("phone", lambda s: phone.run(s, path=self.path)))
+                jobs.append(("phone", lambda s: phone.run(s, path=self.path,
+                                                          on_record=self.on_phone_record)))
             if engine and hasattr(engine, "run"):
                 jobs.append(("engine", lambda s: engine.run(s, on_score=self.on_score,
                                                             path=self.path)))
@@ -412,7 +658,8 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
                 return 0.0
             on_break = time.time() - (self.break_end - config.BREAK_MINUTES * 60) \
                 if self.break_end else 0.0
-            return time.time() - self.session_start - self.break_seconds - on_break
+            walking = time.time() - self.distraction_since if self.distraction_since else 0.0
+            return time.time() - self.session_start - self.break_seconds - on_break - walking
 
         def stop_session(self) -> None:
             if not self.session_start:
@@ -423,28 +670,128 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
                 self.stop_event.set()
             self.session_start = None
             self.break_end = None
-            self.nudge_active = False
+            self.nudge_active = self.nudge_staged = False
+            self.back_prompt = False
+            self.distraction = self.distraction_since = None
             self.score, self.view = None, {}
 
         def on_stop(self, _item) -> None:
             self.stop_session()
             self._refresh_menu()
 
+        def on_quit(self, _item) -> None:
+            self.stop_session()   # logs "session stop" if a session is running
+            rumps.quit_application()
+
         # ---- nudge ------------------------------------------------------
-        def show_nudge(self, engine_logged: bool = False) -> None:
+        def show_nudge(self, engine_logged: bool = False, staged: bool = False) -> None:
             self.nudge_active = True
+            self.nudge_staged = staged
             self.last_nudge = time.time()
             # The engine already logs "shown" when IT decides to nudge.
             # Log it here only for nudges the menu bar decided (demo mode).
             if not engine_logged:
-                events.write("nudge", self.path, action="shown")
-            notify("Loophole", "Time for a real break?",
-                   nudge_message(self.view.get("likely", [])))
+                events.write("nudge", self.path, **nudge_record("shown", staged))
+            self._refresh_menu()   # dot goes red before the alert opens
+            message = with_memory(nudge_message(self.view.get("likely", [])),
+                                  self.view.get("memory_text", ""))
+            notify("Loophole", "Time for a real break?", message)
+            if self.island:
+                return   # the island opens with the three choices; no modal
+            # Modal, like end_break. It blocks only the main thread: the
+            # 1 s timer runs in the default run-loop mode, so it simply pauses
+            # (no re-entry) and catches up when the alert closes. The tracker,
+            # phone and engine threads keep running.
+            try:
+                from AppKit import NSApplication
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
+            clicked = rumps.alert(title="Time for a real break?", message=message,
+                                  ok=f"Take a {config.BREAK_MINUTES}-min break",
+                                  cancel="I'm fine", other="I picked up my phone")
+            if not self.nudge_active or not self.session_start:
+                return   # answered from the menu meanwhile, or session ended
+            action = nudge_choice(clicked)
+            if action == "break":
+                self.on_start_break(None)
+            elif action == "phone":
+                self.on_phone(None)
+            else:
+                self.on_fine(None)
+
+        # ---- distraction ------------------------------------------------
+        def show_distraction(self, rec: dict, staged: bool = False) -> None:
+            """A distraction is in front: ask the user to step away."""
+            if self.nudge_active:
+                self._log_nudge_answer("dismiss")   # the distraction screen replaces it
+            try:
+                apps = list(events.read(self.path, kinds={"app"}))
+            except Exception:
+                apps = []
+            self.work_app = last_work_app(apps) or self.work_app
+            self.distraction = rec
+            self.distraction_since = time.time()
+            name = distraction_name(rec)
+            events.write("distraction", self.path, action="shown", target=name, staged=staged)
+            self._refresh_menu()
+            message = (f"You opened {name}. Put it away, take a short walk, "
+                       "and come back when you're ready.")
+            notify("Loophole", "Distraction detected", message)
+            if self.island:
+                return   # the island pins open with "I'm back"
+            try:
+                from AppKit import NSApplication
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
+            if work_key(rec) is None:
+                rumps.alert(title="Distraction detected", message=message, ok="I'm back")
+                self.on_im_back(None)
+                return
+            clicked = rumps.alert(title="Distraction detected", message=message,
+                                  ok="I'm back", cancel="This is work")
+            if clicked == 0:
+                self.on_this_is_work(None)
+            else:
+                self.on_im_back(None)
+
+        def on_im_back(self, _item) -> None:
+            if not self.distraction:
+                return
+            away = time.time() - (self.distraction_since or time.time())
+            self.break_seconds += away
+            self.last_break = time.time()
+            events.write("distraction", self.path, action="back",
+                         target=distraction_name(self.distraction), seconds=round(away))
+            self.distraction = self.distraction_since = None
+            if self.work_app:
+                bring_to_front(self.work_app)
+            self._refresh_menu()
+
+        def on_this_is_work(self, _item) -> None:
+            """The user says the page in front is work: close the screen without
+            counting a break, and don't ask again about it this session."""
+            if not self.distraction:
+                return
+            key = work_key(self.distraction)
+            if key:
+                self.work_ok.add(key)
+            away = time.time() - (self.distraction_since or time.time())
+            events.write("distraction", self.path, action="work",
+                         target=distraction_name(self.distraction), seconds=round(away))
+            self.distraction = self.distraction_since = None
+            self._refresh_menu()
+
+        def _log_nudge_answer(self, action: str) -> None:
+            """Log break/dismiss/phone for the active nudge, then clear it."""
+            if self.nudge_active:
+                events.write("nudge", self.path, **nudge_record(action, self.nudge_staged))
+            self.nudge_active = False
+            self.nudge_staged = False
 
         def on_start_break(self, _item) -> None:
-            if self.nudge_active:
-                events.write("nudge", self.path, action="break")
-            self.nudge_active = False
+            self._log_nudge_answer("break")
             try:
                 apps = list(events.read(self.path, kinds={"app"}))
             except Exception:
@@ -462,6 +809,10 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             if not app_name:
                 notify("Loophole", "Break's over", "Time to get back to work.")
                 return
+            if self.island:
+                self.back_prompt = True   # island asks; no modal
+                self._refresh_menu()
+                return
             # A modal alert blocks only the main thread; tracker/engine keep running.
             clicked = rumps.alert(title=f"Back to {app_name}?",
                                   message="Your break is over.",
@@ -474,20 +825,40 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
                 bring_to_front(self.work_app)
 
         def on_fine(self, _item) -> None:
-            if self.nudge_active:
-                events.write("nudge", self.path, action="dismiss")
-            self.nudge_active = False
+            self._log_nudge_answer("dismiss")
             self._refresh_menu()
 
         def on_phone(self, _item) -> None:
             phone = _load("phone")
             try:
-                phone.record_manual(source="button", path=self.path)
+                rec = phone.record_manual(source="button", path=self.path)
             except Exception:
-                events.write("phone", self.path, app="unknown", source="button")
-            if self.nudge_active:
-                events.write("nudge", self.path, action="phone")
-                self.nudge_active = False
+                rec = events.write("phone", self.path, app="unknown", source="button")
+            self.on_phone_record(rec)
+            self._log_nudge_answer("phone")
+            self._refresh_menu()
+
+        # ---- island buttons ---------------------------------------------
+        def on_island(self, action: str) -> None:
+            if action.startswith("start:"):
+                self.start_session(int(action.split(":", 1)[1]))
+            elif action == "break" and self.session_start and self.break_end is None:
+                self.on_start_break(None)
+            elif action == "fine":
+                self.on_fine(None)
+            elif action == "phone" and self.session_start:
+                self.on_phone(None)
+            elif action == "stop":
+                self.stop_session()
+            elif action == "back":
+                self.back_prompt = False
+                self.on_back(None)
+            elif action == "not_yet":
+                self.back_prompt = False
+            elif action == "im_back":
+                self.on_im_back(None)
+            elif action == "is_work":
+                self.on_this_is_work(None)
             self._refresh_menu()
 
         # ---- phone setup ------------------------------------------------
@@ -508,7 +879,8 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
                     print(f"[loophole] test ping failed: {e}")
             threading.Thread(target=send, daemon=True).start()
             notify("Loophole", "Phone setup",
-                   "Test ping sent. It should show up here within ~10 s.")
+                   "Test ping sent. During a session, the 'Last phone' line in "
+                   "this menu shows it within ~10 s.")
 
         # ---- demo helpers -----------------------------------------------
         def on_demo_score(self, _item) -> None:
@@ -524,8 +896,14 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
 
         def on_demo_nudge(self, _item) -> None:
             if self.session_start and self.break_end is None:
-                self.show_nudge()
+                # Staged for the audience: mark it so stats can leave it out.
+                self.show_nudge(staged=True)
                 self._refresh_menu()
+
+        def on_demo_distraction(self, _item) -> None:
+            if self.session_start and self.break_end is None and not self.distraction:
+                self.show_distraction({"app": "Google Chrome", "domain": "youtube.com"},
+                                      staged=True)
 
         # ---- drawing ----------------------------------------------------
         def _refresh_menu(self) -> None:
@@ -536,7 +914,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
             if on_break:
                 self.title = f"{BREAK_ICON} {format_countdown(self.break_end - now)}"
             elif in_session:
-                self.title = DOTS[colour_for(self.score)]
+                self.title = DOTS[colour_for(self.score, nudge_active=self.nudge_active)]
             else:
                 self.title = IDLE_DOT
 
@@ -547,11 +925,17 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
                 self.i_focused.title = "Not in a session"
             self.i_momentum.title = self.view.get("momentum", "Momentum: waiting for data")
             likely = self.view.get("likely") or []
+            if colour_for(self.score, nudge_active=self.nudge_active) == "green":
+                likely = []   # same rule as the island: hide while in the flow
             self.i_likely.title = "Likely next: " + (", ".join(likely) if likely else "-")
             self.i_break.title = last_break_text(self.last_break, now)
+            with self._lock:
+                last_phone = self._last_phone
+            self.i_phone.title = last_phone_text(last_phone, now)
             self.i_reason.title = self.view.get("reason", "")
+            self.i_memory.title = self.view.get("memory_status", "Pickup memory: -")
 
-            for item in (self.i_momentum, self.i_likely, self.i_break,
+            for item in (self.i_momentum, self.i_likely, self.i_break, self.i_memory,
                          self.phone_item, self.stop_item):
                 item.hidden = not in_session
             self.i_reason.hidden = not (in_session and self.view.get("reason"))
@@ -562,24 +946,64 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE):
                                     and self.last_break is not None)
             self.start_menu.hidden = in_session
 
+            if self.island:
+                self.island.update(island_view(
+                    in_session=in_session, on_break=on_break,
+                    colour=colour_for(self.score, nudge_active=self.nudge_active),
+                    nudge_active=self.nudge_active, back_prompt=self.back_prompt,
+                    focused_s=self.focused_seconds(), session_min=self.session_minutes,
+                    remaining_s=(self.session_start + self.session_minutes * 60 - now
+                                 if in_session else 0),
+                    break_left_s=(self.break_end - now) if on_break else 0,
+                    bars=self.view.get("bars") or [], likely=likely,
+                    reason=self.view.get("reason", ""), work_app=self.work_app,
+                    momentum=self.view.get("momentum", ""),
+                    memory_text=self.view.get("memory_text", ""),
+                    distraction=(distraction_name(self.distraction)
+                                 if self.distraction else None),
+                    can_mark_work=bool(self.distraction and work_key(self.distraction))))
+
     return LoopholeApp()
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Loophole menu-bar app")
     parser.add_argument("--demo", action="store_true",
-                        help=f"stage demo: {DEMO_COOLDOWN}s nudge cooldown, lower thresholds")
+                        help=f"stage demo: {DEMO_COOLDOWN // 60} min nudge cooldown, lower thresholds")
+    parser.add_argument("--no-island", action="store_true",
+                        help="no notch island; use the menu-bar dot and pop-up alerts only")
     args = parser.parse_args(argv)
     if args.demo:
         print("=" * 60)
         print(" DEMO MODE IS ON")
-        print(f"  nudge cooldown: {DEMO_COOLDOWN}s (normal {config.NUDGE_COOLDOWN // 60} min)")
-        print(f"  stall threshold: {DEMO_STALL_THRESHOLD} (normal {config.STALL_THRESHOLD})")
-        print(f"  rank threshold: {DEMO_RANK_THRESHOLD} (normal {config.RANK_THRESHOLD})")
+        print(f"  nudge cooldown: {DEMO_COOLDOWN // 60} min (normal {config.NUDGE_COOLDOWN // 60} min)")
+        print("  nudges on any close pickup-memory match "
+              f"(normal: {config.PRECURSOR_MIN_EPISODES}+ pickups and {config.PRECURSOR_MIN_LIFT}x the usual pickup rate)")
         print("  extra menu items: 'Demo: score now', 'Demo: show nudge now'")
         print("=" * 60)
+    lock = single_instance_lock(config.EVENTS_FILE)
+    if lock is None:
+        raise SystemExit(f"[loophole] another Loophole is already writing to {config.EVENTS_FILE}. "
+                         "Quit it first (two copies would log every event and pickup twice).")
     print(f"[loophole] writing events to {config.EVENTS_FILE}")
-    build_app(demo=args.demo).run()
+    build_app(demo=args.demo, island=not args.no_island).run()
+
+
+def single_instance_lock(events_file: Path):
+    """Hold an exclusive lock next to the log for as long as this process runs.
+    Returns the open lock file (keep a reference), or None if another process
+    holds it. The OS drops the lock when the process dies, so a crash never
+    leaves a stale lock."""
+    import fcntl
+    lock_path = Path(events_file).with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    f = lock_path.open("w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
 
 
 if __name__ == "__main__":

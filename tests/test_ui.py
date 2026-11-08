@@ -49,15 +49,22 @@ def test_colour_uses_engine_colour():
 
 def test_colour_fallback():
     assert mb.colour_for({"nudge": True}) == "red"
-    assert mb.colour_for({"when": 0.6, "where_rank": 50}, stall=1.0, rank=10) == "amber"
-    assert mb.colour_for({"when": 0.0, "where_rank": 15}, stall=1.0, rank=10) == "amber"
-    assert mb.colour_for({"when": 0.1, "where_rank": None}, stall=1.0, rank=10) == "green"
+    # Amber only when stalling, or a distraction is close AND half-way to a stall.
+    assert mb.colour_for({"when": 1.2, "where_rank": 50}, stall=1.0, rank=3) == "amber"
+    assert mb.colour_for({"when": 0.6, "where_rank": 2}, stall=1.0, rank=3) == "amber"
+    assert mb.colour_for({"when": 0.6, "where_rank": 50}, stall=1.0, rank=3) == "green"
+    assert mb.colour_for({"when": 0.0, "where_rank": 1}, stall=1.0, rank=3) == "green"
+    assert mb.colour_for({"when": 0.1, "where_rank": None}, stall=1.0, rank=3) == "green"
+    assert mb.colour_for({"colour": "green"}, nudge_active=True) == "red"
 
 
 def test_wants_nudge_demo_is_looser():
-    mild = {"when": 0.5, "where_rank": 20, "nudge": False}
+    # Demo mode nudges on any close pickup-memory match; normal mode only on
+    # the engine's decision (match + base-rate lift).
+    mild = {"nudge": False, "memory": {"n_episodes": 2, "matches": [{"ts": 1, "app": "Tiktok"}]}}
     assert not mb.wants_nudge(mild, demo=False)
     assert mb.wants_nudge(mild, demo=True)
+    assert not mb.wants_nudge({"nudge": False, "memory": {"n_episodes": 3, "matches": []}}, demo=True)
     assert mb.wants_nudge({"nudge": True})
     assert not mb.wants_nudge(None, demo=True)
 
@@ -203,3 +210,14 @@ def test_timeline_chart_builds():
     f = dash.build_frames(dash.parse_jsonl("\n".join(json.dumps(r) for r in make_records())))
     chart = dash.timeline_chart(f)
     assert chart.to_dict()  # valid Vega-Lite spec
+
+
+def test_island_hides_likely_and_reason_while_green():
+    base = dict(in_session=True, on_break=False, nudge_active=False, back_prompt=False,
+                focused_s=300, session_min=50, remaining_s=2700, break_left_s=0, bars=[],
+                likely=["TikTok For You feed"], reason="Recently nudged; waiting 5 more min.",
+                work_app="Cursor")
+    green = mb.island_view(colour="green", **base)["details"]
+    assert not any("Likely next" in d or "Recently nudged" in d for d in green)
+    amber = mb.island_view(colour="amber", **base)["details"]
+    assert any("Likely next" in d for d in amber)
