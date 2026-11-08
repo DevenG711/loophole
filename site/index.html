@@ -1,0 +1,1236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loophole</title>
+<meta name="description" content="Loophole is a free, open-source Mac menu-bar app. It watches for the moment your work slows down, and if BehaviorGPT thinks a time-waster is next, it offers you a short break instead.">
+<meta name="theme-color" content="#E4E8EF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171B22" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='%232C9A57'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap" rel="stylesheet">
+<script>document.documentElement.classList.add('js');</script>
+<style>
+:root{
+  --desk:#E4E8EF;
+  --sheet:#FBFCFD;
+  --sheet-up:#FFFFFF;
+  --ink:#1E2430;
+  --ink-2:rgba(30,36,48,.68);
+  --ink-3:rgba(30,36,48,.16);
+  --ink-4:rgba(30,36,48,.06);
+  --go:#2C9A57;
+  --slow:#D69516;
+  --stop:#D0433A;
+  --slow-text:#855A00;
+  --off:#6F7787;
+  --dot-ring:inset 0 0 0 1px rgba(30,36,48,.38);
+  --shadow:0 12px 32px rgba(20,26,38,.16),0 1px 3px rgba(20,26,38,.12);
+  --f-display:"Archivo",system-ui,sans-serif;
+  --f-body:"Newsreader",Georgia,"Times New Roman",serif;
+  --f-sys:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --f-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --desk:#171B22;
+    --sheet:#232831;
+    --sheet-up:#2C323D;
+    --ink:#E3E7EE;
+    --ink-2:rgba(227,231,238,.68);
+    --ink-3:rgba(227,231,238,.16);
+    --ink-4:rgba(227,231,238,.06);
+    --go:#3DBB6E;
+    --slow:#E8AC34;
+    --stop:#EF5D51;
+    --slow-text:#F0BE5C;
+    --off:#5E6676;
+    --dot-ring:none;
+    --shadow:0 14px 36px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.4);
+  }
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:56px}
+body{
+  margin:0;background:var(--desk);color:var(--ink);
+  font-family:var(--f-body);font-size:19px;line-height:1.6;
+  font-optical-sizing:auto;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+@media (prefers-reduced-motion: no-preference){ html{scroll-behavior:smooth} }
+a{color:inherit;text-decoration-thickness:1px;text-underline-offset:.18em}
+a:hover{text-decoration-thickness:2px}
+p{margin:0}
+:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:4px}
+button{font:inherit;color:inherit;cursor:pointer}
+code{font-family:var(--f-mono);font-size:.84em}
+.vh{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.skip{position:absolute;left:16px;top:-60px;z-index:50;background:var(--ink);color:var(--desk);padding:8px 14px;border-radius:8px;font-family:var(--f-display);font-size:15px;text-decoration:none}
+.skip:focus{top:8px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 clamp(16px,4vw,48px)}
+
+/* ---------- the dot ---------- */
+.dot{position:relative;display:inline-block;width:12px;height:12px;flex:none;border-radius:50%}
+.dot i{position:absolute;inset:0;border-radius:50%;opacity:0;box-shadow:var(--dot-ring);transition:opacity .3s ease}
+.dot .l-off{background:var(--off)}
+.dot .l-go{background:var(--go)}
+.dot .l-slow{background:var(--slow)}
+.dot .l-stop{background:var(--stop)}
+.dot[data-s="off"] .l-off,.dot[data-s="go"] .l-go,.dot[data-s="slow"] .l-slow,.dot[data-s="stop"] .l-stop{opacity:1}
+
+/* ---------- nav (menu bar) ---------- */
+.bar{
+  position:sticky;top:0;z-index:40;
+  background:color-mix(in srgb,var(--sheet) 80%,transparent);
+  -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+  border-bottom:1px solid var(--ink-3);
+}
+.bar .wrap{display:flex;align-items:center;gap:26px;height:36px}
+.wordmark{font-family:var(--f-display);font-weight:750;font-size:15.5px;letter-spacing:-.01em;text-decoration:none}
+.bar nav{display:flex;gap:22px;margin-left:auto;align-items:center}
+.bar nav a{font-family:var(--f-display);font-size:14.5px;font-weight:500;text-decoration:none;padding:6px 0}
+.bar nav a:hover{text-decoration:underline}
+.bar .dot{margin-left:4px}
+@media (max-width:640px){ .bar nav .wide{display:none} .bar .wrap{gap:16px} }
+
+/* ---------- type ---------- */
+h1,h2,h3{font-family:var(--f-display);margin:0;color:var(--ink);text-wrap:balance}
+h1{
+  font-size:clamp(44px,6.4vw,82px);line-height:.96;font-weight:800;font-stretch:76%;
+  letter-spacing:-.012em;max-width:9.5em;
+}
+h2{
+  font-size:clamp(32px,4.3vw,54px);line-height:1.02;font-weight:760;font-stretch:88%;
+  letter-spacing:-.014em;max-width:18em;
+}
+h3{font-size:19px;line-height:1.3;font-weight:650;font-stretch:96%}
+.lede{font-size:clamp(19px,1.7vw,21.5px);max-width:30em;margin-top:26px}
+.prose{max-width:62ch}
+.prose p+p{margin-top:14px}
+.num{font-family:var(--f-display);font-stretch:75%;font-variant-numeric:tabular-nums;font-weight:600}
+
+/* ---------- buttons ---------- */
+.btn{
+  display:inline-flex;align-items:center;gap:10px;
+  font-family:var(--f-display);font-weight:650;font-size:16.5px;font-stretch:95%;
+  background:var(--ink);color:var(--desk);text-decoration:none;
+  padding:14px 22px;border-radius:10px;border:0;
+  transition:transform .1s ease;
+}
+.btn:hover{text-decoration:none;background:color-mix(in srgb,var(--ink) 86%,var(--desk))}
+.btn:active{transform:scale(.97)}
+.btn.big{font-size:19px;padding:18px 28px;border-radius:12px}
+.textlink{font-family:var(--f-display);font-weight:550;font-size:16.5px;font-stretch:95%}
+
+/* ---------- hero ---------- */
+.hero{padding-top:clamp(40px,7vw,88px)}
+.hero-grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(32px,5vw,72px);align-items:start}
+.hero-copy{padding-top:10px}
+.cta{display:flex;flex-direction:column;align-items:flex-start;gap:16px;margin-top:32px}
+.small{font-size:16px;color:var(--ink-2);margin-top:18px;max-width:30em}
+@media (max-width:900px){ .hero-grid{grid-template-columns:minmax(0,1fr)} }
+
+/* ---------- stage ---------- */
+.stage-wrap{margin:0}
+#stage:focus{outline:none}
+.stage{
+  position:relative;overflow:hidden;
+  background:var(--sheet);border:1px solid var(--ink-3);border-radius:14px;
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  grid-template-areas:"bar bar" "sent sent" "sees guess" "foot foot";
+}
+.s-bar{
+  grid-area:bar;display:flex;align-items:center;justify-content:space-between;
+  height:30px;padding:0 12px 0 14px;border-bottom:1px solid var(--ink-3);background:var(--ink-4);
+  font-family:var(--f-sys);font-size:13px;
+}
+.s-bar .app{font-weight:600}
+.slot{position:relative;display:flex;align-items:center;justify-content:flex-end;width:48px;height:18px}
+.slot .timer{position:absolute;right:0;top:50%;margin-top:-9px;line-height:18px;font-family:var(--f-display);font-stretch:75%;font-weight:600;font-size:14px;font-variant-numeric:tabular-nums;opacity:0}
+.s-sent{grid-area:sent;position:relative;padding:28px 28px 70px;min-height:270px}
+.sentence{
+  position:relative;max-width:53%;
+  font-family:var(--f-body);font-size:clamp(21px,2.05vw,27px);line-height:1.45;
+}
+.sentence .c{opacity:1}
+.js .sentence .c{opacity:0}
+.js .sentence .c.pre{opacity:1}
+.dw{position:relative;display:inline-block;transform-origin:0 100%}
+.dw .amb{position:absolute;left:0;top:0;color:var(--slow-text);opacity:0;white-space:nowrap;pointer-events:none}
+.caret{position:absolute;left:0;top:0;width:2px;height:1.2em;background:var(--ink);opacity:0;pointer-events:none}
+.caret.on{opacity:1}
+.caret.blink{animation:blink 1.06s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.ghost{
+  position:absolute;right:30px;bottom:22px;
+  font-family:var(--f-body);font-style:italic;font-size:clamp(20px,1.9vw,25px);color:var(--ink-2);opacity:0;
+}
+.s-sees{grid-area:sees;padding:18px 24px 22px 28px;border-top:1px solid var(--ink-3)}
+.s-guess{grid-area:guess;padding:18px 28px 18px 24px;border-top:1px solid var(--ink-3);border-left:1px solid var(--ink-3)}
+.label{font-family:var(--f-display);font-size:14px;font-weight:600;font-stretch:92%;color:var(--ink-2);line-height:1.3}
+.meters{margin:12px 0 0;display:grid;grid-template-columns:auto 1fr;gap:6px 16px;align-items:center}
+.meters dt{font-family:var(--f-display);font-size:14.5px;font-weight:500}
+.meters dd{margin:0;display:flex;align-items:center;gap:12px;min-height:30px}
+#keys{font-size:28px;line-height:1}
+.spark{display:flex;gap:3px;align-items:flex-end;width:96px;height:26px;flex:none}
+.spark i{flex:1;height:100%;background:var(--ink-2);border-radius:1px;transform-origin:50% 100%}
+#pace{font-family:var(--f-display);font-weight:600;font-size:15px;display:inline-block}
+#pace[data-p="slowing"]{color:var(--slow-text)}
+.fine{font-size:15.5px;line-height:1.45;color:var(--ink-2);margin-top:12px;font-style:italic}
+.rank{position:relative;height:196px;margin-top:10px;font-family:var(--f-display);font-size:15px;font-stretch:88%}
+.rank .row{position:absolute;left:0;right:0;top:0;height:28px;display:flex;align-items:center;gap:10px;padding:0 8px;border-radius:6px}
+.rank .rn{width:2.4ch;text-align:right;color:var(--ink-2);font-stretch:75%;font-variant-numeric:tabular-nums;font-weight:600}
+.rank .row .hl{position:absolute;inset:0;border-radius:6px;background:var(--stop);opacity:0}
+.rank .row span{position:relative}
+.rank .gap{color:var(--ink-2)}
+.cut{position:absolute;left:0;right:0;top:168px;border-top:1.5px dashed var(--ink-2)}
+.cut span{position:absolute;right:0;top:-10px;background:var(--sheet);padding:0 0 0 6px;font-size:12.5px;line-height:18px;color:var(--ink-2);font-family:var(--f-display);font-weight:600}
+.newest{font-family:var(--f-display);font-size:13.5px;color:var(--ink-2);margin-top:6px;min-height:20px}
+.newest b{font-weight:600;color:var(--ink);display:inline-block}
+.s-foot{grid-area:foot;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 28px 12px;border-top:1px solid var(--ink-3);min-height:50px}
+.caption{font-size:16.5px;line-height:1.4;font-style:italic}
+.replay{background:none;border:0;padding:6px 0;font-family:var(--f-display);font-weight:600;font-size:14.5px;text-decoration:underline;text-underline-offset:.2em}
+.replay:hover{text-decoration-thickness:2px}
+.replay[hidden]{display:none}
+.stage-note{font-size:15px;color:var(--ink-2);margin-top:12px}
+
+/* nudge + dialog: fake macOS chrome */
+.nudge,.dialog{
+  position:absolute;z-index:5;font-family:var(--f-sys);font-size:13px;line-height:1.38;
+  background:var(--sheet-up);border:1px solid var(--ink-3);border-radius:12px;box-shadow:var(--shadow);
+  opacity:0;pointer-events:none;
+}
+.nudge{top:10px;right:12px;width:min(300px,43%);padding:12px 14px 13px;transform:translateY(-6px) scale(.92);transform-origin:100% 0}
+.nudge.open{opacity:1;transform:none;pointer-events:auto}
+.n-head{display:flex;align-items:center;gap:7px;font-weight:600;margin-bottom:3px}
+.n-head .dot{width:9px;height:9px}
+.n-btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.mbtn{
+  font-family:var(--f-sys);font-size:12.5px;line-height:1.2;padding:6px 10px;border-radius:6px;
+  background:var(--ink-4);border:1px solid var(--ink-3);color:var(--ink);
+  transition:transform .1s ease;
+}
+.mbtn:hover{background:var(--ink-3)}
+.mbtn:active{transform:scale(.97)}
+.mbtn.primary{background:var(--ink);color:var(--sheet-up);border-color:var(--ink)}
+.dialog{
+  left:50%;top:50%;width:min(270px,calc(100% - 32px));padding:18px 16px 14px;text-align:center;
+  transform:translate(-50%,-50%) scale(.96);
+}
+.dialog.open{opacity:1;transform:translate(-50%,-50%);pointer-events:auto}
+.dialog .d-title{font-weight:700;font-size:13.5px}
+.dialog .n-btns{justify-content:center;margin-top:14px}
+
+@media (max-width:640px){
+  .stage{grid-template-columns:minmax(0,1fr);grid-template-areas:"bar" "sent" "sees" "guess" "foot"}
+  .s-sent{padding:22px 16px 250px;min-height:0}
+  .sentence{max-width:100%;font-size:21px}
+  .ghost{right:16px;bottom:200px}
+  .s-sees{padding:16px 16px 18px}
+  .s-guess{border-left:0;padding:16px}
+  .s-foot{padding:10px 16px 12px}
+  .nudge{top:auto;bottom:10px;left:8px;right:8px;width:auto;transform-origin:50% 100%}
+}
+
+/* ---------- sections ---------- */
+.sec{margin-top:clamp(96px,12vw,150px)}
+.sec>.wrap>h2+*{margin-top:22px}
+.intro{max-width:46ch}
+
+/* session strip */
+.strip{list-style:none;margin:48px 0 0;padding:0;display:grid;grid-template-columns:repeat(6,minmax(0,1fr))}
+.strip li{position:relative;padding:38px 22px 0 0}
+.strip .seg{position:absolute;left:0;right:0;top:7px;height:4px}
+.strip li:first-child .seg{border-radius:2px 0 0 2px}
+.strip li:last-child .seg{border-radius:0 2px 2px 0}
+.strip .mk{position:absolute;left:0;top:0;width:18px;height:18px;border-radius:50%;border:3px solid var(--desk);box-shadow:var(--dot-ring)}
+.strip h3{font-size:18px}
+.strip p{font-size:16.5px;line-height:1.5;margin-top:6px;color:var(--ink)}
+.c-go{background:var(--go)} .c-slow{background:var(--slow)} .c-stop{background:var(--stop)} .c-off{background:var(--off)}
+.mk.nudge-mk{border-radius:5px;width:22px;height:16px;top:1px;background:var(--sheet-up);border:2px solid var(--stop)}
+.mk.break-mk{background:var(--desk);border:3px solid var(--off)}
+@media (max-width:900px){
+  .strip{grid-template-columns:minmax(0,1fr)}
+  .strip li{padding:0 0 26px 40px}
+  .strip li:last-child{padding-bottom:0}
+  .strip .seg{left:7px;right:auto;top:0;bottom:0;width:4px;height:auto}
+  .strip li:first-child .seg{border-radius:2px 2px 0 0;top:4px}
+  .strip li:last-child .seg{border-radius:0 0 2px 2px;bottom:auto;height:14px}
+  .strip h3{margin-top:-2px}
+}
+.menu-row{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(28px,5vw,72px);margin-top:64px;align-items:start}
+.menu-row .prose{padding-top:46px}
+.mock{max-width:380px;justify-self:start}
+.mock-bar{display:flex;justify-content:flex-end;align-items:center;height:28px;padding:0 14px;border-radius:8px 8px 0 0;background:color-mix(in srgb,var(--sheet) 70%,transparent);border:1px solid var(--ink-3);border-bottom:0}
+.menu{
+  font-family:var(--f-sys);font-size:13.5px;line-height:1.3;
+  background:var(--sheet-up);border:1px solid var(--ink-3);border-radius:0 0 10px 10px;box-shadow:var(--shadow);padding:6px;
+}
+.menu div{padding:5px 10px;border-radius:5px}
+.menu .sep{height:1px;padding:0;margin:5px 10px;background:var(--ink-3)}
+.mspark{display:inline-flex;gap:2px;align-items:flex-end;height:11px;margin:0 5px;vertical-align:-1px}
+.mspark i{width:3px;height:100%;background:currentColor;transform-origin:50% 100%}
+@media (max-width:760px){ .menu-row{grid-template-columns:minmax(0,1fr);margin-top:48px} .menu-row .prose{padding-top:0} }
+
+/* how it decides */
+.halves{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(28px,5vw,72px);margin-top:40px}
+.halves h3{font-size:22px;margin-bottom:10px}
+.where{padding-left:clamp(0px,3vw,36px);border-left:1px solid var(--ink-3)}
+.rule-line{font-size:clamp(21px,2vw,25px);line-height:1.45;max-width:40em;margin-top:44px}
+.tt{margin-top:40px;border-collapse:separate;border-spacing:8px;margin-left:-8px;max-width:760px;width:calc(100% + 16px)}
+.tt caption{caption-side:bottom;text-align:left;font-size:16px;color:var(--ink-2);padding:8px 8px 0;line-height:1.45}
+.tt th{font-family:var(--f-display);font-weight:550;font-size:15px;line-height:1.3;text-align:left;vertical-align:bottom;padding:0 4px 4px;color:var(--ink-2)}
+.tt th[scope="row"]{vertical-align:middle;width:30%;color:var(--ink)}
+.tt td{padding:0}
+.cell{
+  width:100%;display:flex;align-items:center;gap:10px;padding:18px 16px;min-height:64px;
+  background:var(--sheet);border:1px solid var(--ink-3);border-radius:10px;
+  font-family:var(--f-display);font-size:16px;font-weight:600;text-align:left;
+}
+.cell:hover{border-color:var(--ink-2)}
+.cell .dot{width:14px;height:14px}
+@media (max-width:760px){ .halves{grid-template-columns:minmax(0,1fr)} .where{padding-left:0;border-left:0;padding-top:28px;border-top:1px solid var(--ink-3)} .cell{padding:14px 12px;font-size:15px} .tt th{font-size:14px} }
+
+/* findings */
+/* exhibits: shapes taken from the data */
+.exhibit{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:32px clamp(28px,5vw,72px);margin-top:56px;align-items:start}
+.ex-text p{font-size:18px;max-width:44ch;margin-top:8px}
+.ex-text .next{margin-top:40px}
+.ladders{margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px 32px}
+.ladders figcaption,.ruler-fig figcaption{grid-column:1/-1;font-size:15.5px;line-height:1.45;color:var(--ink-2);max-width:46ch}
+.lad-title{min-height:2.6em;font-family:var(--f-display);font-size:14.5px;font-weight:600;font-stretch:92%;color:var(--ink-2)}
+.lad{position:relative;height:228px;margin-top:16px;font-family:var(--f-display)}
+.lad::before{content:"";position:absolute;left:30px;top:0;bottom:6px;width:1.5px;background:var(--ink-3)}
+.tk{position:absolute;left:0;width:22px;margin-top:-9px;line-height:18px;text-align:right;font-size:13px;font-stretch:75%;font-weight:600;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.cutl{position:absolute;left:31px;right:0;border-top:1.5px dashed var(--ink-2)}
+.cutl span{position:absolute;right:0;top:-19px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.mk2{position:absolute;left:25px;right:0;display:flex;align-items:center;gap:10px;margin-top:-10px;min-height:20px;font-size:15px;font-stretch:90%;line-height:1.25}
+.mk2 i{flex:none;width:12px;height:12px;border-radius:50%;background:var(--ink-2);box-shadow:0 0 0 3px var(--desk)}
+.mk2.in i{background:var(--stop)}
+#pickMark{transition:transform .6s var(--ease-out)}
+.ruler-fig{margin:0;display:grid}
+.ruler{position:relative;height:118px;margin:0 6px;font-family:var(--f-display)}
+.rl-axis{position:absolute;left:0;right:0;top:56px;height:1.5px;background:var(--ink-2)}
+.rl-tk{position:absolute;top:56px;padding-top:9px;font-size:13px;font-stretch:75%;font-weight:600;font-variant-numeric:tabular-nums;color:var(--ink-2);transform:translateX(-50%)}
+.rl-tk::before{content:"";position:absolute;left:50%;top:0;width:1.5px;height:6px;background:var(--ink-2)}
+.rl-mk{position:absolute;top:56px;width:0;height:0}
+.rl-mk i{position:absolute;left:-7px;top:-6px;width:14px;height:14px;border-radius:50%;box-shadow:0 0 0 3px var(--desk)}
+.rl-mk span{position:absolute;white-space:nowrap;font-size:15.5px;font-stretch:90%}
+.rl-mk.hi span{right:-6px;bottom:16px;text-align:right}
+.rl-mk.lo span{left:-6px;top:30px}
+.rl-mk .num{font-size:17px;margin-left:4px}
+.blind{margin-top:56px}
+.blind p{font-size:18px;max-width:52ch;margin-top:8px}
+.toggle:hover .sw{box-shadow:inset 0 0 0 1.5px var(--ink)}
+.toggle{
+  display:flex;align-items:center;gap:12px;margin-top:18px;padding:8px 0;background:none;border:0;
+  font-family:var(--f-display);font-weight:600;font-size:16px;text-align:left;
+}
+.sw{position:relative;flex:none;width:40px;height:24px;border-radius:12px;background:var(--ink-3);box-shadow:inset 0 0 0 1.5px var(--ink-2)}
+.sw::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.35);z-index:1;transition:transform .2s var(--ease-out)}
+.sw .on{position:absolute;inset:0;border-radius:12px;background:var(--ink);opacity:0;transition:opacity .2s ease}
+.toggle[aria-pressed="true"] .sw::after{transform:translateX(16px);background:var(--desk)}
+.toggle[aria-pressed="true"] .sw .on{opacity:1}
+.closer{font-size:clamp(22px,2.2vw,28px);line-height:1.35;margin-top:64px;max-width:30em}
+.closer span{display:block;color:var(--ink-2);font-size:.72em;margin-top:6px}
+@media (max-width:900px){ .exhibit{grid-template-columns:minmax(0,1fr);margin-top:44px} .ladders{max-width:620px} }
+@media (max-width:440px){ .ladders{grid-template-columns:minmax(0,1fr)} .lad-title{min-height:0} }
+
+/* privacy */
+.lead{font-size:clamp(21px,2vw,25px);line-height:1.45;max-width:34em}
+.lists{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(28px,5vw,72px);margin-top:44px;max-width:980px}
+.lists ul{margin:12px 0 0;padding:0;list-style:none}
+.lists li{padding:9px 0;border-bottom:1px solid var(--ink-3);font-size:18px}
+.lists .note{font-size:16.5px;color:var(--ink-2);margin-top:14px;max-width:40ch;line-height:1.5}
+@media (max-width:640px){ .lists{grid-template-columns:minmax(0,1fr)} }
+
+/* download */
+.need{margin-top:18px;max-width:52ch}
+.dl-row{margin-top:30px}
+.steps{list-style:none;counter-reset:s;margin:52px 0 0;padding:0;max-width:760px}
+.steps>li{counter-increment:s;position:relative;padding:0 0 30px 52px}
+.steps>li::before{
+  content:counter(s);position:absolute;left:0;top:-2px;width:34px;height:34px;border-radius:50%;
+  border:1.5px solid var(--ink-3);display:grid;place-items:center;
+  font-family:var(--f-display);font-stretch:75%;font-weight:650;font-size:17px;font-variant-numeric:tabular-nums;
+}
+.steps p{font-size:18px}
+.cmd{display:flex;align-items:center;gap:8px;margin-top:10px;max-width:100%;background:var(--sheet);border:1px solid var(--ink-3);border-radius:9px;padding:6px 6px 6px 14px}
+.cmd code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;font-size:15px;padding:6px 0}
+.copy{flex:none;font-family:var(--f-display);font-weight:600;font-size:14px;padding:7px 12px;border-radius:7px;border:1px solid var(--ink-3);background:var(--desk);min-width:76px;transition:transform .1s ease}
+.copy:hover{background:var(--sheet)}
+.copy:active{transform:scale(.97)}
+.after{margin-top:8px;max-width:62ch;font-size:18px}
+
+footer{margin-top:clamp(96px,12vw,150px);border-top:1px solid var(--ink-3);padding:28px 0 44px}
+footer p{font-size:16.5px;color:var(--ink-2)}
+footer .wrap{display:flex;flex-wrap:wrap;gap:8px 28px;justify-content:space-between;align-items:baseline}
+
+@media (prefers-reduced-motion: reduce){
+  .dot i,#pickMark,.sw::after,.sw .on,.btn,.mbtn,.copy{transition:none}
+  .caret.blink{animation:none}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="wordmark" href="#top">Loophole</a>
+    <nav aria-label="Main">
+      <a class="wide" href="#how-it-works">How it works</a>
+      <a class="wide" href="#privacy">Privacy</a>
+      <a href="#download">Download</a>
+      <span class="dot" id="navDot" data-s="go" role="img" aria-label="Loophole status dot"><i class="l-off"></i><i class="l-go"></i><i class="l-slow"></i><i class="l-stop"></i></span>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<section class="hero" id="top" aria-labelledby="h1">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <h1 id="h1">You were about to pick up your phone.</h1>
+      <p class="lede">Loophole is a small Mac app that notices when your work starts to stall. If a time-waster also looks like where you’re headed, it offers you a proper break before you get there.</p>
+      <div class="cta">
+        <a class="btn" href="https://github.com/DevenG711/loophole/archive/refs/heads/main.zip">Download for Mac (.zip)</a>
+        <a class="textlink" href="https://github.com/DevenG711/loophole">Read the code on GitHub</a>
+      </div>
+      <p class="small">The zip is the source code. You run it with Python.</p>
+    </div>
+
+    <figure class="stage-wrap">
+      <div class="stage" id="stage" tabindex="-1">
+        <div class="s-bar" aria-hidden="true">
+          <span class="app">VS Code</span>
+          <span class="slot"><span class="timer" id="timer">5:00</span><span class="dot" id="stageDot" data-s="go"><i class="l-off"></i><i class="l-go"></i><i class="l-slow"></i><i class="l-stop"></i></span></span>
+        </div>
+
+        <div class="s-sent">
+          <p class="vh">Someone is writing: “Okay. Intro’s done. Now the second paragraph just needs to explain why the results look weird.” They slow down and stop before the last three words.</p>
+          <p class="sentence" id="sentence" aria-hidden="true">Okay. Intro’s done. Now the second paragraph just needs to explain why the results look weird.</p>
+          <span class="ghost" id="ghost" aria-hidden="true">Instagram</span>
+          <div class="nudge" id="nudge" role="group" aria-label="Loophole nudge" inert>
+            <p class="n-head"><span class="dot" data-s="stop"><i class="l-stop"></i></span>Loophole</p>
+            <p>You’ve slowed down, and Instagram looks like your next move. Take a 5-minute break instead?</p>
+            <div class="n-btns">
+              <button class="mbtn primary" type="button" data-a="break">Start 5-min break</button>
+              <button class="mbtn" type="button" data-a="fine">I’m fine</button>
+              <button class="mbtn" type="button" data-a="phone">I grabbed my phone</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="s-sees">
+          <p class="label">What Loophole sees</p>
+          <dl class="meters">
+            <dt>Keys</dt><dd><span class="num" id="keys">20</span></dd>
+            <dt>Pace</dt><dd><span class="spark" id="spark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span id="pace" data-p="steady">steady</span></dd>
+          </dl>
+          <p class="fine">It counts keys. It never sees the words.</p>
+        </div>
+
+        <div class="s-guess">
+          <p class="label">BehaviorGPT’s guess for what’s next</p>
+          <div class="rank" id="rank" aria-hidden="true">
+            <div class="cut"><span>top 10</span></div>
+            <div class="row" data-k="vs" style="transform:translateY(0px)"><span class="rn">1</span><span>VS Code</span></div>
+            <div class="row" data-k="term" style="transform:translateY(28px)"><span class="rn">2</span><span>Terminal</span></div>
+            <div class="row" data-k="saf" style="transform:translateY(56px)"><span class="rn">3</span><span>Safari</span></div>
+            <div class="row" data-k="prev" style="transform:translateY(84px)"><span class="rn">4</span><span>Preview</span></div>
+            <div class="row" data-k="notes" style="transform:translateY(112px)"><span class="rn">5</span><span>Notes</span></div>
+            <div class="row gap" data-k="gap" style="transform:translateY(140px)"><span class="rn"></span><span>…</span></div>
+            <div class="row" data-k="insta" style="transform:translateY(168px)"><span class="hl"></span><span class="rn">19</span><span>Instagram</span></div>
+          </div>
+          <p class="newest" aria-hidden="true">Newest event: <b id="newest">VS Code</b></p>
+        </div>
+
+        <div class="s-foot">
+          <p class="caption" id="caption" aria-live="polite"></p>
+          <button class="replay" id="replay" type="button" hidden>Play it again</button>
+        </div>
+
+        <div class="dialog" id="dialog" role="group" aria-label="Break over" inert>
+          <p class="d-title">Back to VS Code?</p>
+          <p>Your break is over.</p>
+          <div class="n-btns">
+            <button class="mbtn" type="button" data-a="notyet">Not yet</button>
+            <button class="mbtn primary" type="button" data-a="back">Back to VS Code</button>
+          </div>
+        </div>
+      </div>
+      <figcaption class="stage-note">Illustration. The real app runs in your Mac’s menu bar.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="sec" aria-labelledby="h-see">
+  <div class="wrap">
+    <h2 id="h-see">Mostly, it stays out of your way</h2>
+    <p class="intro">Click the dot and pick 25, 50 or 90 minutes. Here’s everything that can happen after that.</p>
+
+    <ol class="strip" id="strip">
+      <li><span class="seg c-go"></span><span class="mk c-go"></span><h3>Green</h3><p>Work is moving along. Nothing happens.</p></li>
+      <li><span class="seg c-slow"></span><span class="mk c-slow"></span><h3>Amber</h3><p>You’ve slowed down, or a time-waster looks likely. Only the colour changes.</p></li>
+      <li><span class="seg c-stop"></span><span class="mk c-stop"></span><h3>Red</h3><p>Both of those at once. A nudge is a few seconds away.</p></li>
+      <li><span class="seg c-stop"></span><span class="mk nudge-mk"></span><h3>Nudge</h3><p>Take the break, wave it off, or admit the phone is already in your hand.</p></li>
+      <li><span class="seg c-off"></span><span class="mk break-mk"></span><h3>Break</h3><p>A countdown sits where the dot was. You’re allowed to enjoy it.</p></li>
+      <li><span class="seg c-go"></span><span class="mk c-go"></span><h3>Back</h3><p>When time’s up, a dialog offers to bring your work app to the front.</p></li>
+    </ol>
+
+    <div class="menu-row">
+      <div class="prose">
+        <p>Open the menu whenever you want the numbers behind the colour. You’ll see how long you’ve been focused, whether your typing is picking up or fading, which app BehaviorGPT expects next, and when you last took a break.</p>
+      </div>
+      <div class="mock">
+        <div class="mock-bar" aria-hidden="true"><span class="dot" data-s="slow"><i class="l-slow"></i></span></div>
+        <div class="menu" role="img" aria-label="The Loophole menu during a session. Focused 23 min. Momentum slowing, 40% of your last 10 minutes. Likely next: Instagram. Last break: 34 min ago. Stop session.">
+          <div>Focused 23 min</div>
+          <div>Momentum<span class="mspark"><i style="transform:scaleY(.2)"></i><i style="transform:scaleY(.45)"></i><i style="transform:scaleY(.7)"></i><i style="transform:scaleY(1)"></i><i style="transform:scaleY(.7)"></i><i style="transform:scaleY(.3)"></i></span>slowing (40% of your last 10 min)</div>
+          <div>Likely next: Instagram</div>
+          <div>Last break: 34 min ago</div>
+          <div class="sep"></div>
+          <div>Stop session</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="how-it-works" aria-labelledby="h-how">
+  <div class="wrap">
+    <h2 id="h-how">When, then where</h2>
+
+    <div class="halves">
+      <div class="when prose">
+        <h3>When are you about to stop?</h3>
+        <p>Your Mac works this out on its own, every 30 seconds. It compares your typing speed with your own last ten minutes. It also looks at idle time, scrolling with no typing, bursts followed by long pauses, app switching, and how long it’s been since your last break.</p>
+      </div>
+      <div class="where prose">
+        <h3>Where would you go next?</h3>
+        <p>That one goes to BehaviorGPT, a model built to predict a person’s next action. Loophole sends it your last eight events and gets back a ranked list of likely next moves. All Loophole checks is how high the first time-waster sits.</p>
+      </div>
+    </div>
+
+    <p class="rule-line">A nudge needs all four of these at once: you’re stalling, a time-waster is in the top 10, you touched the keyboard or mouse in the last 10 seconds, and there hasn’t been a nudge for 20 minutes.</p>
+
+    <table class="tt" id="tt">
+      <caption>Hover over a square, or tab to it, and the dot at the top of the page shows that colour.</caption>
+      <thead>
+        <tr><td></td><th scope="col">No time-waster near the top</th><th scope="col">A time-waster in the top 10</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Typing at your usual pace</th>
+          <td><button class="cell" type="button" data-s="go"><span class="dot" data-s="go"><i class="l-go"></i></span>Green</button></td>
+          <td><button class="cell" type="button" data-s="slow"><span class="dot" data-s="slow"><i class="l-slow"></i></span>Amber</button></td>
+        </tr>
+        <tr>
+          <th scope="row">Stalling</th>
+          <td><button class="cell" type="button" data-s="slow"><span class="dot" data-s="slow"><i class="l-slow"></i></span>Amber</button></td>
+          <td><button class="cell" type="button" data-s="stop"><span class="dot" data-s="stop"><i class="l-stop"></i></span>Red, then a nudge</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="sec" aria-labelledby="h-checked">
+  <div class="wrap">
+    <h2 id="h-checked">What we’ve checked so far</h2>
+    <p class="intro">We ran these tests on 8 November 2026, with the same BehaviorGPT setup the app uses.</p>
+
+    <div class="exhibit">
+      <div class="ex-text">
+        <h3>History moves the ranking</h3>
+        <p>We fed it two kinds of recent activity and checked the rank of the highest time-waster.</p>
+        <h3 class="next">From 23rd to 1st</h3>
+        <p>That’s how far the top time-waster climbed when we added a single phone app open to the history (it started at about 23rd). Flip the switch to watch it move.</p>
+        <button class="toggle" id="toggle" type="button" aria-pressed="false"><span class="sw" aria-hidden="true"><span class="on"></span></span>Add a recent phone pickup</button>
+        <p class="vh" id="toggleSay" aria-live="polite"></p>
+      </div>
+      <figure class="ladders">
+        <div>
+          <p class="lad-title">Different histories</p>
+          <div class="lad">
+            <span class="tk" style="top:0">1</span><span class="tk" style="top:81px">10</span><span class="tk" style="top:171px">20</span><span class="cutl" style="top:85px"><span>top 10</span></span>
+            <span class="mk2 in" style="top:0"><i></i>YouTube and social apps, 1st</span>
+            <span class="mk2" style="top:162px"><i></i>Coding, about 19th</span>
+          </div>
+        </div>
+        <div>
+          <p class="lad-title">With and without a phone pickup</p>
+          <div class="lad">
+            <span class="tk" style="top:0">1</span><span class="tk" style="top:81px">10</span><span class="tk" style="top:171px">20</span><span class="cutl" style="top:85px"><span>top 10</span></span>
+            <span class="mk2" id="pickMark" style="top:0;transform:translateY(198px)"><i></i><span id="pickLabel">Without, about 23rd</span></span>
+          </div>
+        </div>
+        <figcaption>Each dot marks a rank in BehaviorGPT’s list. Higher up means more likely.</figcaption>
+      </figure>
+    </div>
+
+    <div class="exhibit">
+      <div class="ex-text">
+        <h3>Titles say more than sites</h3>
+        <p>A rule that only knows app names sees every YouTube tab as the same thing. BehaviorGPT reads the page title too, so a tutorial lands close to plain coding and prank videos land far from it.</p>
+      </div>
+      <figure class="ruler-fig">
+        <div class="ruler">
+          <span class="rl-axis"></span>
+          <span class="rl-tk" style="left:0">0</span><span class="rl-tk" style="left:50%">0.5</span><span class="rl-tk" style="left:100%">1</span>
+          <span class="rl-mk hi" style="left:74%"><i class="c-stop"></i><span>Prank and vlog titles <b class="num">0.74</b></span></span>
+          <span class="rl-mk lo" style="left:16%"><i class="c-go"></i><span>A coding tutorial <b class="num">0.16</b></span></span>
+        </div>
+        <figcaption>Both scored on the same 0 to 1 scale.</figcaption>
+      </figure>
+    </div>
+
+    <div class="blind">
+      <h3>Its blind spots</h3>
+      <p>BehaviorGPT doesn’t notice pauses, the gaps between events, or the time of day. We tested each one. That’s why the timing side never leaves your Mac.</p>
+    </div>
+
+    <p class="closer">We haven’t measured how well it works yet.<span>Treat it as an experiment you get to run on yourself.</span></p>
+  </div>
+</section>
+
+<section class="sec" id="privacy" aria-labelledby="h-priv">
+  <div class="wrap">
+    <h2 id="h-priv">Is this a keylogger?</h2>
+    <p class="lead">No. macOS already keeps a running count of key presses, and that one number is all Loophole reads.</p>
+
+    <div class="lists">
+      <div>
+        <h3>Sent out</h3>
+        <ul>
+          <li>App names</li>
+          <li>YouTube and Reddit page titles</li>
+          <li>Names of apps you open on your phone</li>
+        </ul>
+        <p class="note">These go to BehaviorGPT, and Loophole tells it not to save them as training events. Phone opens reach your laptop through ntfy.sh, on a topic name only you know.</p>
+      </div>
+      <div>
+        <h3>Stays on your Mac</h3>
+        <ul>
+          <li>Counts of keys, clicks and scrolls</li>
+          <li>Idle time</li>
+          <li>Addresses and titles of your other browser tabs</li>
+          <li>Your scores and session log</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="download" aria-labelledby="h-dl">
+  <div class="wrap">
+    <h2 id="h-dl">Running in about five minutes</h2>
+    <p class="need">You’ll need macOS, Python 3.11 or newer, and a BehaviorGPT API key from UnboxAI. An iPhone is optional.</p>
+    <div class="dl-row"><a class="btn big" href="https://github.com/DevenG711/loophole/archive/refs/heads/main.zip">Get the .zip</a></div>
+
+    <ol class="steps">
+      <li>
+        <p>Unzip it and open Terminal in the new folder.</p>
+        <div class="cmd"><code>cd loophole-main</code><button class="copy" type="button" data-copy="cd loophole-main">Copy</button></div>
+      </li>
+      <li>
+        <p>Install what it needs. No uv? <code>pip install -e .</code> works too.</p>
+        <div class="cmd"><code>uv sync</code><button class="copy" type="button" data-copy="uv sync">Copy</button></div>
+      </li>
+      <li>
+        <p>Make your settings file, then open <code>.env</code> and fill in <code>UNBOXAI_API_KEY</code> and <code>NTFY_TOPIC</code>.</p>
+        <div class="cmd"><code>cp .env.example .env</code><button class="copy" type="button" data-copy="cp .env.example .env">Copy</button></div>
+      </li>
+      <li>
+        <p>Start it. The dot shows up in your menu bar.</p>
+        <div class="cmd"><code>.venv/bin/python -m loophole.menubar</code><button class="copy" type="button" data-copy=".venv/bin/python -m loophole.menubar">Copy</button></div>
+      </li>
+      <li>
+        <p>Optional: add one Shortcuts automation on your iPhone that pings your laptop when Instagram, TikTok, YouTube, X, Reddit or Snapchat opens. The <a href="https://github.com/DevenG711/loophole/blob/main/docs/phone-setup.md">phone setup guide</a> walks you through it.</p>
+      </li>
+    </ol>
+    <p class="after">To look back at a finished session, there’s a Streamlit dashboard. It lays out the apps you used, your slowdown score, BehaviorGPT’s guesses, each nudge and each pickup.</p>
+    <div class="cmd" style="max-width:760px"><code>.venv/bin/streamlit run dashboard/app.py</code><button class="copy" type="button" data-copy=".venv/bin/streamlit run dashboard/app.py">Copy</button></div>
+    <p class="vh" id="copied" aria-live="polite"></p>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Made by a team of two at Sundai Club Hack #148. Free and open source.</p>
+    <p><a href="https://github.com/DevenG711/loophole">github.com/DevenG711/loophole</a></p>
+  </div>
+</footer>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const RM = matchMedia('(prefers-reduced-motion: reduce)');
+  const PHONE = matchMedia('(max-width: 640px)');
+  let reduced = RM.matches;
+
+  /* ------------------------------------------------------------------
+     Dots. The nav dot mirrors the hero, unless the truth table is
+     showing a colour on it.
+  ------------------------------------------------------------------ */
+  const navDot = $('#navDot'), stageDot = $('#stageDot');
+  let heroState = 'go', navOverride = null;
+  const labels = {off: 'grey', go: 'green', slow: 'amber', stop: 'red'};
+  function paintNav() {
+    const s = navOverride || heroState;
+    navDot.dataset.s = s;
+    navDot.setAttribute('aria-label', 'Loophole status dot: ' + labels[s]);
+  }
+  function setDot(s) { heroState = s; stageDot.dataset.s = s; paintNav(); }
+
+  /* ------------------------------------------------------------------
+     A pausable clock. The hero timeline waits on it, and every WAAPI
+     animation it starts is paused with it (tab hidden or hero offscreen).
+  ------------------------------------------------------------------ */
+  const clock = {t: 0, last: 0, run: false, raf: 0, idle: 0, waits: [], anims: new Set(), held: new Set()};
+  let heroVisible = false;
+  function frame(now) {
+    clock.raf = 0;
+    if (!clock.run) return;
+    clock.t += Math.min(now - clock.last, 100);
+    clock.last = now;
+    const due = clock.waits.filter(w => w.at <= clock.t);
+    if (due.length) clock.waits = clock.waits.filter(w => w.at > clock.t);
+    due.forEach(w => w.res());
+    clock.idle = clock.waits.length || due.length ? 0 : clock.idle + 1;
+    if (clock.idle < 3) clock.raf = requestAnimationFrame(frame);
+  }
+  function kick() {
+    if (clock.run && !clock.raf) { clock.last = performance.now(); clock.idle = 0; clock.raf = requestAnimationFrame(frame); }
+  }
+  function wait(ms) { return new Promise(res => { clock.waits.push({at: clock.t + ms, res}); kick(); }); }
+  function setRunning(on) {
+    if (on === clock.run) return;
+    clock.run = on;
+    if (on) {
+      clock.held.forEach(a => { if (a.playState === 'paused') a.play(); });
+      clock.held.clear();
+      kick();
+    } else {
+      cancelAnimationFrame(clock.raf); clock.raf = 0;
+      clock.anims.forEach(a => { if (a.playState === 'running') { a.pause(); clock.held.add(a); } });
+    }
+  }
+  function anim(el, kf, opts) {
+    if (reduced) return null;
+    const a = el.animate(kf, opts);
+    clock.anims.add(a);
+    const done = () => { clock.anims.delete(a); clock.held.delete(a); };
+    a.finished.then(done, done);
+    if (!clock.run) { a.pause(); clock.held.add(a); }
+    return a;
+  }
+  function gate() { setRunning(!document.hidden && heroVisible); }
+  document.addEventListener('visibilitychange', gate);
+
+  /* ------------------------------------------------------------------
+     Build the sentence: one span per character, laid out from the start.
+  ------------------------------------------------------------------ */
+  const TEXT = "Okay. Intro’s done. Now the second paragraph just needs to explain why the results look weird.";
+  const PRE = "Okay. Intro’s done. ".length;
+  const SLOW_AT = TEXT.indexOf('why');
+  const DRIFT_AT = TEXT.indexOf('results');
+  const sentence = $('#sentence');
+  const chars = [];
+  const driftWords = [];
+  sentence.textContent = '';
+  (function build() {
+    let i = 0;
+    const words = TEXT.split(' ');
+    words.forEach((w, wi) => {
+      const drifting = i >= DRIFT_AT;
+      let holder = sentence;
+      if (drifting) {
+        const dw = document.createElement('span');
+        dw.className = 'dw';
+        const ink = document.createElement('span');
+        const amb = document.createElement('span');
+        amb.className = 'amb'; amb.textContent = w;
+        dw.append(ink, amb);
+        sentence.append(dw);
+        driftWords.push({el: dw, amb, anim: null});
+        holder = ink;
+      }
+      for (const ch of w) {
+        const s = document.createElement('span');
+        s.className = 'c' + (i < PRE ? ' pre' : '');
+        s.textContent = ch;
+        holder.append(s); chars.push(s); i++;
+      }
+      if (wi < words.length - 1) {
+        const sp = document.createElement('span');
+        sp.className = 'c' + (i < PRE ? ' pre' : '');
+        sp.textContent = ' ';
+        sentence.append(sp); chars.push(sp); i++;
+      }
+    });
+  })();
+  const caret = document.createElement('span');
+  caret.className = 'caret';
+  sentence.append(caret);
+  let caretAt = PRE - 1;
+  let caretPos = [];
+  // Read every character's position in one pass (after fonts load and on
+  // resize). Typing then only writes transforms, so no layout per keystroke.
+  function measureCaret() {
+    const base = sentence.getBoundingClientRect();
+    caretPos = chars.map(c => {
+      const r = c.getBoundingClientRect();
+      const dw = c.closest('.dw');
+      let dx = 0, dy = 0;
+      if (dw) { const t = new DOMMatrixReadOnly(getComputedStyle(dw).transform); dx = t.m41; dy = t.m42; }
+      return [r.right - base.left - dx, r.top - base.top - dy, r.height];
+    });
+  }
+  function placeCaret(idx) {
+    caretAt = idx;
+    const p = caretPos[idx];
+    if (!p) return;
+    caret.style.transform = `translate(${p[0].toFixed(1)}px, ${p[1].toFixed(1)}px)`;
+    caret.style.height = p[2].toFixed(1) + 'px';
+  }
+  function caretMode(m) { caret.classList.toggle('on', m !== 'off'); caret.classList.toggle('blink', m === 'blink'); }
+
+  /* ------------------------------------------------------------------
+     Readout, sparkline and the ranked list
+  ------------------------------------------------------------------ */
+  const keysEl = $('#keys'), paceEl = $('#pace'), bars = $$('#spark i');
+  const SPARK = {
+    steady:  [.62, .8, .7, .9, .75, .85, .95, .8, .9, .85],
+    slowing: [.8, .7, .9, .75, .85, .95, .8, .55, .4, .3],
+    stalled: [.7, .9, .75, .85, .95, .8, .55, .35, .12, .05]
+  };
+  let sparkNow = SPARK.steady;
+  function setSpark(name) {
+    const next = SPARK[name];
+    bars.forEach((b, i) => {
+      b.style.transform = `scaleY(${next[i]})`;
+      anim(b, [{transform: `scaleY(${sparkNow[i]})`}, {transform: `scaleY(${next[i]})`}], {duration: 420, easing: 'cubic-bezier(.2,.7,.2,1)'});
+    });
+    sparkNow = next;
+  }
+  function setPace(word) {
+    if (paceEl.textContent === word) return;
+    paceEl.textContent = word; paceEl.dataset.p = word;
+    anim(paceEl, [{opacity: 0, transform: 'translateY(5px)'}, {opacity: 1, transform: 'none'}], {duration: 200, easing: 'ease-out'});
+  }
+  function setKeys(n) { keysEl.textContent = n; }
+
+  const ROW_H = 28;
+  const rankBox = $('#rank');
+  const ROWS = [
+    {k: 'vs', name: 'VS Code', r: [1, 1], s: [0, 0]},
+    {k: 'term', name: 'Terminal', r: [2, 2], s: [1, 1]},
+    {k: 'saf', name: 'Safari', r: [3, 3], s: [2, 2]},
+    {k: 'prev', name: 'Preview', r: [4, 5], s: [3, 4]},
+    {k: 'notes', name: 'Notes', r: [5, 6], s: [4, 5], gone: true},
+    {k: 'gap', name: '…', r: ['', ''], s: [5, 5]},
+    {k: 'insta', name: 'Instagram', r: [19, 4], s: [6, 3], hot: true}
+  ];
+  ROWS.forEach(o => {
+    o.el = rankBox.querySelector(`[data-k="${o.k}"]`);
+    o.rn = $('.rn', o.el);
+    o.hl = $('.hl', o.el);
+  });
+  function setRank(phase, animate) {
+    ROWS.forEach(o => {
+      const from = o.s[1 - phase] * ROW_H, to = o.s[phase] * ROW_H;
+      o.rn.textContent = o.r[phase];
+      o.el.style.transform = `translateY(${to}px)`;
+      const op = phase && o.gone ? 0 : 1;
+      const fromOp = !phase && o.gone ? 0 : 1;
+      o.el.style.opacity = op;
+      const hlTo = phase ? .13 : 0;
+      if (o.hl) o.hl.style.opacity = hlTo;
+      if (animate && from !== to) {
+        anim(o.el, [{transform: `translateY(${from}px)`, opacity: fromOp}, {transform: `translateY(${to}px)`, opacity: op}], {duration: 520, easing: 'cubic-bezier(.16,1,.3,1)'});
+        if (o.hl) anim(o.hl, [{opacity: .13 - hlTo}, {opacity: hlTo}], {duration: 400, delay: phase ? 200 : 0, easing: 'ease-out', fill: 'backwards'});
+      }
+    });
+  }
+  const newestEl = $('#newest');
+  function setNewest(t, animate) {
+    newestEl.textContent = t;
+    if (animate) anim(newestEl, [{opacity: 0, transform: 'translateY(4px)'}, {opacity: 1, transform: 'none'}], {duration: 220, easing: 'ease-out'});
+  }
+
+  /* ------------------------------------------------------------------
+     Nudge, dialog, timer, caption
+  ------------------------------------------------------------------ */
+  const stage = $('#stage'), nudge = $('#nudge'), dialog = $('#dialog');
+  const ghost = $('#ghost'), timerEl = $('#timer'), caption = $('#caption'), replay = $('#replay');
+  const PANEL = {
+    nudge: {closed: 'translateY(-6px) scale(.92)', open: 'translateY(0) scale(1)'},
+    dialog: {closed: 'translate(-50%,-50%) scale(.96)', open: 'translate(-50%,-50%) scale(1)'}
+  };
+  function openPanel(el, focusSel) {
+    const p = PANEL[el.id];
+    const hadFocus = stage.contains(document.activeElement);
+    el.inert = false; el.classList.add('open');
+    anim(el, [{opacity: 0, transform: p.closed}, {opacity: 1, transform: p.open}], {duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)'});
+    if (hadFocus && focusSel) $(focusSel, el).focus({preventScroll: true});
+  }
+  function closePanel(el) {
+    if (!el.classList.contains('open')) return;
+    const p = PANEL[el.id];
+    el.classList.remove('open'); el.inert = true;
+    anim(el, [{opacity: 1, transform: p.open}, {opacity: 0, transform: p.closed}], {duration: 160, easing: 'cubic-bezier(.4,0,1,1)'});
+  }
+  function say(t) { caption.textContent = t; }
+  function showTimer(on) {
+    timerEl.style.opacity = on ? 1 : 0;
+    stageDot.style.opacity = on ? 0 : 1;
+    anim(timerEl, [{opacity: on ? 0 : 1}, {opacity: on ? 1 : 0}], {duration: 200});
+    anim(stageDot, [{opacity: on ? 1 : 0}, {opacity: on ? 0 : 1}], {duration: 200});
+  }
+  function pulse() {
+    [stageDot, navDot].forEach(d => anim(d, [{transform: 'scale(1)'}, {transform: 'scale(1.4)'}, {transform: 'scale(1)'}], {duration: 600, easing: 'ease-in-out'}));
+  }
+  function fade(el, to, ms, delay) {
+    const from = getComputedStyle(el).opacity;
+    el.style.opacity = to;
+    anim(el, [{opacity: from}, {opacity: to}], {duration: ms, delay: delay || 0, fill: 'backwards', easing: 'ease-out'});
+  }
+
+  /* ------------------------------------------------------------------
+     Drift: the last three words float toward the ghost "Instagram".
+  ------------------------------------------------------------------ */
+  // Each word gets a spot in a line that ends just left of the ghost word,
+  // in reading order, so the phrase hangs together in mid-air.
+  function driftVector(i, into) {
+    const g = ghost.getBoundingClientRect();
+    const box = sentence.getBoundingClientRect();
+    const rects = driftWords.map(d => {
+      const r = d.el.getBoundingClientRect();
+      const t = new DOMMatrixReadOnly(getComputedStyle(d.el).transform);
+      return {left: r.left - t.m41, top: r.top - t.m42, width: r.width, height: r.height};
+    });
+    const gap = 14;
+    const total = rects.reduce((a, r) => a + r.width + gap, 0);
+    let tx = into ? g.left + g.width * .3 : Math.max(box.left, g.left - total - 14);
+    if (!into) for (let n = 0; n < i; n++) tx += rects[n].width + gap;
+    let ty = into ? g.top + g.height * .1 : g.top - g.height * (PHONE.matches ? .05 : .55);
+    if (!into) ty = Math.max(ty, box.bottom + 6);
+    const w = rects[i];
+    return {x: tx - w.left, y: ty - w.top, r: into ? 0 : 1 + i};
+  }
+  const tf = v => `translate(${v.x.toFixed(1)}px, ${v.y.toFixed(1)}px) rotate(${v.r}deg)`;
+  function startDrift() {
+    driftWords.forEach((d, i) => {
+      const v = driftVector(i);
+      d.amb.style.opacity = .9;
+      anim(d.amb, [{opacity: 0}, {opacity: .9}], {duration: 380, delay: i * 110, fill: 'backwards', easing: 'ease-out'});
+      d.anim = anim(d.el, [{transform: 'translate(0,0) rotate(0deg)'}, {transform: tf(v)}], {duration: 1250, delay: i * 110, easing: 'cubic-bezier(.45,0,.2,1)', fill: 'both'});
+    });
+  }
+  function freezeDrift() {
+    driftWords.forEach(d => { if (d.anim) { d.anim.pause(); clock.anims.delete(d.anim); clock.held.delete(d.anim); } });
+  }
+  function staticDrift(frac) {
+    driftWords.forEach((d, i) => {
+      const v = driftVector(i);
+      d.el.style.transform = tf({x: v.x * frac, y: v.y * frac, r: v.r * frac});
+      d.amb.style.opacity = .9;
+    });
+  }
+  function wordsHome(ms, easing) {
+    driftWords.forEach((d, i) => {
+      const m = getComputedStyle(d.el).transform;
+      if (d.anim) { d.anim.cancel(); d.anim = null; }
+      d.el.style.transform = '';
+      if (m && m !== 'none') anim(d.el, [{transform: m}, {transform: 'none'}], {duration: ms, easing, delay: (driftWords.length - 1 - i) * 50, fill: 'backwards'});
+    });
+  }
+  function wordsAway() {
+    driftWords.forEach((d, i) => {
+      const from = getComputedStyle(d.el).transform;
+      const v = driftVector(i, true);
+      const to = `translate(${v.x.toFixed(1)}px, ${v.y.toFixed(1)}px) scale(.7)`;
+      if (d.anim) { d.anim.cancel(); d.anim = null; }
+      d.el.style.transform = to;
+      anim(d.el, [{transform: from === 'none' ? 'none' : from}, {transform: to}], {duration: 700, delay: i * 90, easing: 'cubic-bezier(.5,0,.75,0)', fill: 'backwards'});
+      fade(d.amb, 0, 300, 450 + i * 90);
+    });
+  }
+
+  /* ------------------------------------------------------------------
+     Timeline
+  ------------------------------------------------------------------ */
+  let runId = 0, started = false;
+  const ABORT = {};
+  async function sleep(ms, id) { await wait(ms); if (id !== runId) throw ABORT; }
+  const JIT = [0, 8, -6, 13, -3, 5, -9, 11, 2, -4];
+  const SLOW_GAPS = [90, 120, 150, 190, 230, 280, 330, 0];
+
+  function resetStage() {
+    runId++;
+    clock.waits = [];
+    stage.getAnimations({subtree: true}).concat(navDot.getAnimations()).forEach(a => a.cancel());
+    clock.anims.clear(); clock.held.clear();
+    chars.forEach((c, i) => { c.style.opacity = i < PRE ? 1 : 0; });
+    driftWords.forEach(d => { d.anim = null; d.el.style.transform = ''; d.amb.style.opacity = 0; });
+    [nudge, dialog].forEach(el => { el.classList.remove('open'); el.inert = true; });
+    ghost.style.opacity = 0;
+    timerEl.style.opacity = 0; timerEl.textContent = '5:00'; stageDot.style.opacity = '';
+    setKeys(PRE);
+    sparkNow = SPARK.steady; bars.forEach((b, i) => { b.style.transform = `scaleY(${sparkNow[i]})`; });
+    paceEl.textContent = 'steady'; paceEl.dataset.p = 'steady';
+    setRank(0, false); setNewest('VS Code', false);
+    setDot('go'); say(''); replay.hidden = true;
+    placeCaret(PRE - 1); caretMode('blink');
+  }
+
+  function showChar(i) {
+    const c = chars[i];
+    c.style.opacity = 1;
+    anim(c, [{opacity: 0}, {opacity: 1}], {duration: 40});
+  }
+
+  async function play() {
+    resetStage();
+    const id = runId;
+    try {
+      await sleep(350, id);
+      caretMode('on');
+      let keys = PRE;
+      for (let i = PRE; i < DRIFT_AT; i++) {
+        showChar(i); placeCaret(i); setKeys(++keys);
+        if (i === SLOW_AT) { setDot('slow'); setPace('slowing'); setSpark('slowing'); }
+        const gap = i < SLOW_AT ? 30 + JIT[i % 10] : SLOW_GAPS[Math.min(i - SLOW_AT, SLOW_GAPS.length - 1)];
+        if (gap) await sleep(gap, id);
+      }
+      caretMode('blink'); setPace('stalled'); setSpark('stalled');
+      await sleep(220, id);
+      setNewest('a YouTube tab', true);
+      await sleep(160, id);
+      setRank(1, true);
+      await sleep(220, id);
+      startDrift();
+      fade(ghost, 1, 600);
+      await sleep(800, id);
+      setDot('stop'); pulse();
+      await sleep(110, id);
+      openPanel(nudge, '[data-a="break"]');
+      await sleep(240, id);
+      freezeDrift();
+      say('Your turn. The buttons work.');
+    } catch (e) { if (e !== ABORT) throw e; }
+  }
+
+  function frozenFrame() {
+    resetStage();
+    chars.forEach((c, i) => { if (i < DRIFT_AT) c.style.opacity = 1; });
+    setKeys(DRIFT_AT);
+    caretAt = DRIFT_AT - 1; placeCaret(caretAt); caretMode('on');
+    sparkNow = SPARK.stalled; bars.forEach((b, i) => { b.style.transform = `scaleY(${sparkNow[i]})`; });
+    paceEl.textContent = 'stalled'; paceEl.dataset.p = 'stalled';
+    setRank(1, false); setNewest('a YouTube tab', false);
+    ghost.style.opacity = 1;
+    staticDrift(1);
+    setDot('stop');
+    nudge.classList.add('open'); nudge.inert = false;
+    say('Your turn. The buttons work.');
+  }
+
+  async function typeRest(id) {
+    measureCaret();
+    caretMode('on');
+    let keys = DRIFT_AT;
+    for (let i = DRIFT_AT; i < chars.length; i++) {
+      if (reduced) { chars[i].style.opacity = 1; continue; }
+      showChar(i); placeCaret(i); setKeys(++keys);
+      await sleep(38 + JIT[i % 10], id);
+    }
+    if (reduced) setKeys(chars.length);
+    placeCaret(chars.length - 1); caretMode('blink');
+  }
+
+  function finish() {
+    replay.hidden = false;
+  }
+
+  async function onAction(a) {
+    const id = ++runId;
+    clock.waits = [];
+    const hadFocus = stage.contains(document.activeElement);
+    try {
+      if (a === 'break') {
+        closePanel(nudge);
+        wordsHome(600, 'cubic-bezier(.34,1.4,.64,1)');
+        driftWords.forEach(d => fade(d.amb, 0, 300, 250));
+        fade(ghost, 0, 300);
+        setDot('off'); showTimer(true); timerEl.textContent = '4:59';
+        say('Break started. The page skips most of the five minutes.');
+        if (hadFocus) stage.focus({preventScroll: true});
+        for (const t of ['4:58', '4:57']) { await sleep(1000, id); timerEl.textContent = t; }
+        await sleep(1000, id);
+        timerEl.textContent = '0:00';
+        showTimer(false);
+        say('');
+        openPanel(dialog);
+        if (hadFocus) $('[data-a="back"]', dialog).focus({preventScroll: true});
+      } else if (a === 'back' || a === 'notyet') {
+        closePanel(dialog);
+        setDot('go');
+        setPace('steady'); setSpark('steady');
+        setRank(0, true); setNewest('VS Code', true);
+        if (a === 'back') {
+          say('VS Code is back in front, right where you left it.');
+          if (hadFocus) { replay.hidden = false; replay.focus({preventScroll: true}); }
+          await typeRest(id);
+        } else {
+          say('The dialog closes. VS Code stays put until you want it.');
+          if (hadFocus) { replay.hidden = false; replay.focus({preventScroll: true}); }
+        }
+        finish();
+      } else if (a === 'fine') {
+        closePanel(nudge);
+        wordsHome(250, 'cubic-bezier(.2,.8,.2,1)');
+        driftWords.forEach(d => fade(d.amb, 0, 200));
+        fade(ghost, 0, 250);
+        setDot('go'); setPace('steady'); setSpark('steady');
+        setRank(0, true); setNewest('VS Code', true);
+        say("It won’t ask again for 20 minutes.");
+        if (hadFocus) { replay.hidden = false; replay.focus({preventScroll: true}); }
+        await sleep(200, id);
+        await typeRest(id);
+        finish();
+      } else if (a === 'phone') {
+        closePanel(nudge);
+        wordsAway();
+        say('Logged. That pickup goes on your session timeline.');
+        if (hadFocus) { replay.hidden = false; replay.focus({preventScroll: true}); }
+        await sleep(2800, id);
+        if (stage.contains(document.activeElement)) stage.focus({preventScroll: true});
+        if (reduced) frozenFrame(); else play();
+      }
+    } catch (e) { if (e !== ABORT) throw e; }
+  }
+
+  stage.addEventListener('click', e => {
+    const b = e.target.closest('button[data-a]');
+    if (b) onAction(b.dataset.a);
+  });
+  replay.addEventListener('click', () => {
+    stage.focus({preventScroll: true});
+    if (reduced) frozenFrame(); else play();
+  });
+
+  // Keep the caret in place if the layout changes size.
+  new ResizeObserver(() => {
+    measureCaret();
+    placeCaret(caretAt);
+    if (nudge.classList.contains('open')) {
+      driftWords.forEach(d => { if (d.anim) { d.anim.cancel(); d.anim = null; } d.el.style.transform = ''; });
+      staticDrift(1);
+    }
+  }).observe(sentence);
+
+  // Start once fonts are ready and the stage is on screen.
+  let fontsReady = false;
+  const tryStart = () => {
+    if (started || !fontsReady || !heroVisible) return;
+    started = true;
+    if (reduced) frozenFrame(); else play();
+  };
+  new IntersectionObserver(entries => {
+    const en = entries[entries.length - 1];
+    heroVisible = en.isIntersecting;
+    gate();
+    if (en.intersectionRatio >= .35) tryStart();
+  }, {threshold: [0, .35]}).observe(stage);
+  resetStage();
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => {
+    fontsReady = true; measureCaret(); placeCaret(caretAt); tryStart();
+  });
+
+  RM.addEventListener('change', () => {
+    reduced = RM.matches;
+    if (started) { if (reduced) frozenFrame(); else play(); }
+  });
+
+  /* ------------------------------------------------------------------
+     Truth table drives the nav dot
+  ------------------------------------------------------------------ */
+  $$('#tt .cell').forEach(c => {
+    const on = () => { navOverride = c.dataset.s; paintNav(); };
+    const off = () => { navOverride = null; paintNav(); };
+    c.addEventListener('mouseenter', on); c.addEventListener('focus', on); c.addEventListener('click', on);
+    c.addEventListener('mouseleave', () => { if (document.activeElement !== c) off(); });
+    c.addEventListener('blur', off);
+  });
+
+  /* ------------------------------------------------------------------
+     Session strip: one colour reveal when it scrolls in
+  ------------------------------------------------------------------ */
+  const strip = $('#strip');
+  const segs = $$('.seg', strip);
+  if (!reduced && 'IntersectionObserver' in window) {
+    const hidden = () => PHONE.matches ? 'inset(0 0 100% 0)' : 'inset(0 100% 0 0)';
+    segs.forEach(s => { s.style.clipPath = hidden(); });
+    const io = new IntersectionObserver(es => {
+      if (!es.some(e => e.isIntersecting)) return;
+      io.disconnect();
+      const from = hidden();
+      segs.forEach((s, i) => {
+        s.style.clipPath = 'inset(0 0 0 0)';
+        if (!RM.matches) s.animate([{clipPath: from}, {clipPath: 'inset(0 0 0 0)'}], {duration: 150, delay: i * 150, easing: 'linear', fill: 'backwards'});
+      });
+    }, {threshold: .4});
+    io.observe(strip);
+  }
+
+  /* ------------------------------------------------------------------
+     Phone-pickup toggle: the ladder mark moves with a transform
+  ------------------------------------------------------------------ */
+  const toggle = $('#toggle'), pickMark = $('#pickMark'), pickLabel = $('#pickLabel'), toggleSay = $('#toggleSay');
+  toggle.addEventListener('click', () => {
+    const on = toggle.getAttribute('aria-pressed') !== 'true';
+    toggle.setAttribute('aria-pressed', String(on));
+    pickMark.style.transform = on ? 'translateY(0px)' : 'translateY(198px)';
+    pickMark.classList.toggle('in', on);
+    pickLabel.textContent = on ? 'With a pickup, 1st' : 'Without, about 23rd';
+    toggleSay.textContent = on ? 'With the pickup added, the top time-waster ranks 1st.' : 'Without the pickup, it ranks about 23rd.';
+  });
+
+  /* ------------------------------------------------------------------
+     Copy buttons
+  ------------------------------------------------------------------ */
+  const copied = $('#copied');
+  $$('.copy').forEach(b => {
+    let t = 0;
+    b.addEventListener('click', async () => {
+      const text = b.dataset.copy;
+      try { await navigator.clipboard.writeText(text); }
+      catch (_) {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.append(ta); ta.select();
+        try { document.execCommand('copy'); } catch (__) {}
+        ta.remove();
+      }
+      b.textContent = 'Copied';
+      copied.textContent = 'Copied: ' + text;
+      clearTimeout(t);
+      t = setTimeout(() => { b.textContent = 'Copy'; copied.textContent = ''; }, 1500);
+    });
+  });
+})();
+</script>
+</body>
+</html>
