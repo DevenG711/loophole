@@ -1,0 +1,27 @@
+[project]
+name = "focusguard"
+version = "0.1.0"
+description = "Notices when you stall at work and where you're about to drift, and nudges you to take a real break"
+requires-python = ">=3.11"
+dependencies = [
+    "behaviorgpt",
+    "python-dotenv>=1.0",
+    "requests>=2.31",
+    "rumps>=0.4; sys_platform == 'darwin'",
+    "streamlit>=1.38",
+    "pandas>=2.0",
+    "scikit-learn>=1.4",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+markers = ["live: calls the real BehaviorGPT API (run with LIVE=1)"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["focusguard"]

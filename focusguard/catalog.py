@@ -1,0 +1,79 @@
+"""The 60-item app/site catalog uploaded to BehaviorGPT.
+
+ids starting f_ are focus items, d_ are distraction items. app_catalog.csv is
+the same list; it is what was uploaded (catalog id in config.CATALOG_ID).
+Do not change ids without re-uploading the catalog (the key has 1 slot left).
+"""
+
+# (id, name, brand, categories)
+APPS = [
+    # focus
+    ("f_vscode", "Visual Studio Code", "Microsoft", "Software, Developer Tools, Code Editor"),
+    ("f_terminal", "Terminal", "Apple", "Software, Developer Tools, Command Line"),
+    ("f_github", "GitHub pull request review", "GitHub", "Software, Developer Tools, Code Hosting"),
+    ("f_stackoverflow", "Stack Overflow question", "Stack Overflow", "Software, Developer Tools, Q&A"),
+    ("f_pydocs", "Python documentation", "Python", "Software, Documentation, Programming"),
+    ("f_mdn", "MDN Web Docs", "Mozilla", "Software, Documentation, Web Development"),
+    ("f_jira", "Jira ticket board", "Atlassian", "Productivity, Project Management"),
+    ("f_linear", "Linear issues", "Linear", "Productivity, Project Management"),
+    ("f_notion", "Notion notes", "Notion", "Productivity, Notes, Docs"),
+    ("f_gdocs", "Google Docs document", "Google", "Productivity, Docs, Writing"),
+    ("f_gsheets", "Google Sheets spreadsheet", "Google", "Productivity, Spreadsheets"),
+    ("f_figma", "Figma design file", "Figma", "Productivity, Design Tools"),
+    ("f_overleaf", "Overleaf LaTeX paper", "Overleaf", "Productivity, Writing, Research"),
+    ("f_arxiv", "arXiv research paper", "arXiv", "Research, Papers, Science"),
+    ("f_scholar", "Google Scholar search", "Google", "Research, Papers, Search"),
+    ("f_chatgpt", "ChatGPT coding help", "OpenAI", "Software, AI Assistant, Developer Tools"),
+    ("f_claude", "Claude coding help", "Anthropic", "Software, AI Assistant, Developer Tools"),
+    ("f_xcode", "Xcode", "Apple", "Software, Developer Tools, IDE"),
+    ("f_pycharm", "PyCharm", "JetBrains", "Software, Developer Tools, IDE"),
+    ("f_jupyter", "Jupyter notebook", "Project Jupyter", "Software, Data Science, Notebooks"),
+    ("f_aws", "AWS console", "Amazon Web Services", "Software, Cloud, Developer Tools"),
+    ("f_postman", "Postman API client", "Postman", "Software, Developer Tools, API"),
+    ("f_docker", "Docker Desktop", "Docker", "Software, Developer Tools, Containers"),
+    ("f_canvas", "Canvas course assignment", "Instructure", "Education, Coursework"),
+    ("f_khan", "Khan Academy lesson", "Khan Academy", "Education, Lessons"),
+    ("f_calendar", "Google Calendar", "Google", "Productivity, Calendar"),
+    ("f_gmail", "Gmail inbox", "Google", "Productivity, Email"),
+    ("f_slack", "Slack work channel", "Slack", "Productivity, Work Chat"),
+    ("f_zoom", "Zoom meeting", "Zoom", "Productivity, Video Calls"),
+    ("f_excel", "Microsoft Excel", "Microsoft", "Productivity, Spreadsheets"),
+    # distraction
+    ("d_youtube", "YouTube home feed", "YouTube", "Entertainment, Video, Streaming"),
+    ("d_youtube_shorts", "YouTube Shorts", "YouTube", "Entertainment, Short Video"),
+    ("d_tiktok", "TikTok For You feed", "TikTok", "Entertainment, Short Video, Social Media"),
+    ("d_instagram", "Instagram Reels", "Instagram", "Social Media, Short Video"),
+    ("d_twitter", "X / Twitter timeline", "X", "Social Media, News Feed"),
+    ("d_reddit", "Reddit front page", "Reddit", "Social Media, Forums, Memes"),
+    ("d_facebook", "Facebook feed", "Meta", "Social Media, News Feed"),
+    ("d_netflix", "Netflix", "Netflix", "Entertainment, Streaming, TV Shows"),
+    ("d_twitch", "Twitch live stream", "Twitch", "Entertainment, Gaming, Live Streaming"),
+    ("d_hulu", "Hulu", "Hulu", "Entertainment, Streaming, TV Shows"),
+    ("d_spotify_pod", "Spotify podcast", "Spotify", "Entertainment, Podcasts"),
+    ("d_steam", "Steam game store", "Valve", "Gaming, Video Games"),
+    ("d_discord", "Discord gaming server", "Discord", "Social Media, Gaming, Chat"),
+    ("d_amazon", "Amazon shopping", "Amazon", "Shopping, Online Store"),
+    ("d_espn", "ESPN scores", "ESPN", "Sports, News"),
+    ("d_buzzfeed", "BuzzFeed quiz", "BuzzFeed", "Entertainment, Celebrity, Quizzes"),
+    ("d_9gag", "9GAG memes", "9GAG", "Entertainment, Memes, Funny"),
+    ("d_pinterest", "Pinterest boards", "Pinterest", "Social Media, Inspiration"),
+    ("d_snapchat", "Snapchat stories", "Snap", "Social Media, Messaging"),
+    ("d_news", "CNN breaking news", "CNN", "News, Current Events"),
+    ("d_imessage", "iMessage group chat", "Apple", "Social, Messaging"),
+    ("d_whatsapp", "WhatsApp chat", "Meta", "Social, Messaging"),
+    ("d_linkedin", "LinkedIn feed", "LinkedIn", "Social Media, News Feed"),
+    ("d_chess", "Chess.com game", "Chess.com", "Gaming, Board Games"),
+    ("d_wordle", "Wordle", "New York Times", "Gaming, Puzzles"),
+    ("d_ebay", "eBay listings", "eBay", "Shopping, Online Store"),
+    ("d_zillow", "Zillow homes", "Zillow", "Real Estate, Browsing"),
+    ("d_robinhood", "Robinhood stock prices", "Robinhood", "Finance, Trading"),
+    ("d_primevideo", "Prime Video", "Amazon", "Entertainment, Streaming, Movies"),
+    ("d_hackernews", "Hacker News front page", "Y Combinator", "News, Tech, Forums"),
+]
+
+TAG = {i: ("distraction" if i.startswith("d_") else "focus") for i, *_ in APPS}
+ROW = {i: (name, brand, cats) for i, name, brand, cats in APPS}
+
+
+def is_distraction(item_id: str) -> bool:
+    return item_id.startswith("d_")
