@@ -28,15 +28,16 @@ or send it to yourself in Notes.
 Keep the link private. Anyone who has it can see your pickups or send fake
 ones.
 
-## 2. Make one automation per app
+## 2. Make one automation for all your apps
 
-Do this once for each app you want Loophole to watch. Start with the two or
-three apps you open most when you should be working.
+You make this once. It covers every app you pick, and it sends the name of
+whichever app you opened.
 
 1. Open the **Shortcuts** app and tap the **Automation** tab at the bottom.
 2. Tap **+** (top right). If you have no automations yet, tap **New Automation**.
 3. Scroll down and tap **App**.
-4. Tap **Choose**, pick the app (for example **Instagram**), then tap **Done**.
+4. Tap **Choose** and tick every app that pulls you away from work (for
+   example Instagram, TikTok, YouTube, X, Reddit, Snapchat). Tap **Done**.
 5. Make sure **Is Opened** is ticked and **Is Closed** is not.
 6. Choose **Run Immediately**. Turn **Notify When Run** off. Tap **Next**.
 7. Tap **New Blank Automation**.
@@ -45,34 +46,35 @@ three apps you open most when you should be working.
 10. Tap the **>** arrow next to the action to show more options, and set:
     - **Method:** `POST`
     - **Request Body:** `Form`
-    - Tap **Add new field** > **Text**. Set the key to `app` and the text to
-      the app's name, for example `Instagram`.
+    - Tap **Add new field** > **Text**. Set the key to `app`. For the value,
+      tap the text box and pick **Shortcut Input** from the bar above the
+      keyboard. Shortcut Input is the app that was just opened, so Loophole
+      gets its name (for example `Instagram`).
 11. Tap **Done** (top right).
 
-Repeat for the next app. Only the app name in step 10 changes.
+That's it. To watch more apps later, edit this automation and tick them in
+step 4. You don't need a new automation.
 
-### Which app names to type
+### Which apps Loophole knows by name
 
-Use these names so Loophole knows which app it was (capitals don't matter):
+Loophole can tell BehaviorGPT about these apps (capitals don't matter):
 
 `Instagram`, `TikTok`, `YouTube`, `X`, `Reddit`, `Snapchat`, `Facebook`,
 `WhatsApp`, `Messages`, `Discord`, `Pinterest`, `LinkedIn`, `Netflix`,
 `Twitch`, `Spotify`, `Robinhood`, `Chess`
 
-Any other name still counts as a pickup. Loophole just can't tell
+Any other app you tick still counts as a pickup. Loophole just can't tell
 BehaviorGPT what the app was.
 
-### Short on time?
-
-Make a single automation instead: in step 4 tick all the apps at once, and in
-step 10 type `Phone` as the text. Every pickup then counts, but Loophole won't
-know which app it was. You can switch to one automation per app later.
+If the **Last phone** line (see step 3) shows `Unknown` instead of the app's
+name, the value in step 10 is empty: edit the automation and pick
+**Shortcut Input** again. Pickups still count while you fix it.
 
 ## 3. Test it
 
 1. On the Mac, start Loophole (`bash start.sh`), click the dot and pick
    **Start focus session**. The laptop only listens during a session.
-2. On the iPhone, open one of the apps you picked.
+2. On the iPhone, open one of the apps you ticked.
 3. The first time, iOS may ask **Allow "…" to connect to ntfy.sh?** Tap
    **Always Allow**. Without it the automation stops and asks every time.
 4. Within about 10 seconds, click the Loophole dot. The **Last phone** line
@@ -94,5 +96,5 @@ You can also check the laptop side without the phone: **Phone setup** >
 
 ## Changing apps later
 
-Edit or delete an automation in Shortcuts > **Automation**. If you change
-`NTFY_TOPIC` in `.env`, update the URL in every automation too.
+Edit the automation in Shortcuts > **Automation** and tick or untick apps. If
+you change `NTFY_TOPIC` in `.env`, update the URL in the automation too.

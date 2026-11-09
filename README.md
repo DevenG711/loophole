@@ -28,7 +28,7 @@ Loophole learns your pickups. You do **not** need an API key.
    minimise it). Closing it quits Loophole.
 5. **Set up your iPhone** (optional, 5 minutes): follow
    [docs/phone-setup.md](docs/phone-setup.md). You'll paste your phone link
-   into one Shortcuts automation per app.
+   into one Shortcuts automation that covers all your distracting apps.
 
 Next time, you only need step 2 and `bash start.sh`.
 
@@ -69,12 +69,12 @@ save it, quit Loophole (menu > **Quit Loophole**) and run `bash start.sh` again.
 | `LOOPHOLE_SESSION_LENGTHS` | Session lengths in the Start menu, in minutes, comma-separated | `25,50,90` |
 | `LOOPHOLE_BREAK_MINUTES` | How long a break lasts, in minutes | `5` |
 | `LOOPHOLE_USER` | Name used for your log file, `data/events-<name>.jsonl` | your Mac user name |
-| `NTFY_TOPIC` | Your private phone channel. Your phone link is `https://ntfy.sh/<NTFY_TOPIC>`. If you change it, update every iPhone automation | random, made by setup |
+| `NTFY_TOPIC` | Your private phone channel. Your phone link is `https://ntfy.sh/<NTFY_TOPIC>`. If you change it, update the URL in your iPhone automation | random, made by setup |
 | `UNBOXAI_API_KEY` | Leave empty: Loophole reaches BehaviorGPT through its shared proxy, so you need no key. Put your own here if you have one (free at [portal.unboxai.com](https://portal.unboxai.com)) | empty |
 | `LOOPHOLE_PROXY_URL` | Only if you run your own proxy ([proxy/README.md](proxy/README.md)) | Loophole's proxy |
 
 Which **phone apps** count is set on the iPhone, not here: it's the apps you
-make automations for. See [docs/phone-setup.md](docs/phone-setup.md).
+tick in your automation. See [docs/phone-setup.md](docs/phone-setup.md).
 
 Advanced: the nudge thresholds live in [loophole/config.py](loophole/config.py),
 and the laptop sites and apps that count as distractions are in
@@ -102,7 +102,7 @@ over the internet:
 - To ntfy.sh: the names of phone apps you open (from your iPhone automation).
 
 To remove Loophole, quit it and delete the folder. Then delete the iPhone
-automations in Shortcuts.
+automation in Shortcuts.
 
 ## More
 
