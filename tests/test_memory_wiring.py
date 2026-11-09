@@ -99,7 +99,8 @@ def test_engine_adds_memory_to_result_and_log(tmp_path, monkeypatch):
     assert rec["memory"] == {"n_episodes": 20, "n_usable": None, "n_dev_testing": None,
                              "followed_episodes": None, "ready": True, "early": None, "lift": 6.0,
                              "likely_app": "Instagram", "text": MEMORY["text"],
-                             "score": 2.0, "match_ts": [T0 - 900]}
+                             "score": 2.0, "status": None, "match_share": None,
+                             "match_ts": [T0 - 900]}
 
 
 def test_engine_survives_precursor_crash(tmp_path, monkeypatch):

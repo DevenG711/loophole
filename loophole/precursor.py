@@ -22,6 +22,9 @@ Rules (see CLAUDE.md):
   - Before saying anything we check the base rate: of past moments that
     looked like this, how many were followed by a pickup, compared with all
     past moments. Being in Cursor precedes every pickup and proves nothing.
+  - Silence is reported, not hidden: match() always gives a status and one
+    plain sentence (status_text), e.g. "no pattern yet, 0.97x the usual
+    rate". The gates themselves were not loosened (PROTOCOL.md deviation 15).
 
 Public functions:
   window_features(records, t)  -> dict of SNAPSHOT_FEATURES at t
@@ -456,13 +459,25 @@ def match(records, t: float) -> dict:
       where_gap         BehaviorGPT's lean to distraction now (None if unknown)
       text              a sentence to show, or None (needs ready, a match and
                         lift >= PRECURSOR_MIN_LIFT)
+      match_text        demo-mode sentence "This looks like HH:MM..." without
+                        the base-rate claim; None when nothing matched, or when
+                        matched moments cover more than 1/PRECURSOR_MIN_LIFT of
+                        all moments (then a match only means "at your laptop")
+      match_share       matched_moments / known past moments (None if none known)
+      followed_rate     matched_followed / matched_moments (None if no match)
+      status            "learning" (not ready), "no_match" (ready, now looks like
+                        no past pickup), "no_pattern" (matched, but no text: lift
+                        unknown, below PRECURSOR_MIN_LIFT or too few followed
+                        pickups) or "pattern" (text is set)
+      status_text       always one plain sentence about the above (for the UI)
       score             1 / (1 + nearest distance); 0 with no pickups yet.
                         Higher = more like past pickups (for the eval).
     """
     out = {"n_episodes": 0, "n_usable": 0, "n_dev_testing": 0, "ready": False, "early": False,
            "matches": [], "matched_moments": 0, "matched_followed": 0,
            "followed_episodes": 0, "base_rate": None, "lift": None,
-           "likely_app": None, "text": None, "match_text": None, "score": 0.0}
+           "likely_app": None, "text": None, "match_text": None, "score": 0.0,
+           "match_share": None, "followed_rate": None, "status": "learning", "status_text": ""}
     log = _Log(records, t)
     eps, templates = log.episodes, log.templates
     out["n_episodes"] = len(eps)
@@ -471,7 +486,7 @@ def match(records, t: float) -> dict:
     out["ready"] = len(templates) >= PRECURSOR_MIN_EPISODES
     out["early"] = out["ready"] and len(templates) < PRECURSOR_CONFIDENT_EPISODES
     if not templates or not log.inputs:
-        return out
+        return _with_status(out, close=False)
 
     # Past moments where you were at the computer (for scaling and base rate).
     lo, hi = PRECURSOR_TARGET_S
@@ -523,6 +538,10 @@ def match(records, t: float) -> dict:
             matched_followed += followed
             followed_eps.update(next_p)
     out["matched_moments"], out["matched_followed"] = matched, matched_followed
+    # Same counters as above (moments whose outcome is known before t): no peeking.
+    match_share = matched / known if known else None
+    out["match_share"] = None if match_share is None else round(match_share, 3)
+    out["followed_rate"] = round(matched_followed / matched, 3) if matched else None
     out["followed_episodes"] = len(followed_eps)
     if known and followed_all:
         base = followed_all / known
@@ -535,7 +554,14 @@ def match(records, t: float) -> dict:
     where_now = log.where_at(t) or {}
     out["pull_app"], out["pull_z"] = where_now.get("pull_name"), where_now.get("pull_z")
     out["where_gap"] = where_now.get("gap")
-    if close:   # what a match looks like, without the base-rate claim (demo mode)
+    # Demo-mode text is capped by a math fact, not a tuned number. With m
+    # matched moments, mf of them followed, F followed moments out of K known:
+    #   lift = (mf / m) / (F / K) <= (F / m) / (F / K) = K / m = 1 / match_share
+    # (mf <= F). So when the matched moments cover more than 1/MIN_LIFT of all
+    # moments, a MIN_LIFT lift is impossible and "This looks like 14:44" only
+    # means "you are at your laptop". Stricter only: it can hide match_text,
+    # never add it, and it uses no labels.
+    if close and (match_share is None or match_share <= 1 / PRECURSOR_MIN_LIFT):
         when = " and ".join(_clock(e["ts"]) for _, e in close)
         out["match_text"] = f"This looks like {when}, right before you opened {out['likely_app']}."
     if (out["ready"] and close and out["lift"] is not None and out["lift"] >= PRECURSOR_MIN_LIFT
@@ -552,4 +578,33 @@ def match(records, t: float) -> dict:
                    if out["early"] else f"(Pattern learned from {n} pickups.)")
         out["text"] = (f"This looks like {when}, right before you opened {out['likely_app']}: "
                        f"{_describe(cur)}.{pull} {learned}")
+    return _with_status(out, close=bool(close))
+
+
+def _with_status(out: dict, close: bool) -> dict:
+    """Fill status and status_text: one plain sentence, so silence is visible.
+    The no_pattern wording never suggests a pattern (lift 1-2 is not one)."""
+    n = out["n_usable"]
+    if not out["ready"]:
+        out["status"] = "learning"
+        out["status_text"] = (f"Pickup memory is learning: {n} of {PRECURSOR_MIN_EPISODES} "
+                              "usable pickups so far.")
+    elif not close:
+        out["status"] = "no_match"
+        out["status_text"] = "Pickup memory: right now doesn't look like any past pickup."
+    elif out["text"]:
+        out["status"] = "pattern"
+        out["status_text"] = out["text"]
+    else:
+        out["status"] = "no_pattern"
+        lift = out["lift"]
+        if lift is None:
+            why = "Too few similar moments to judge yet."
+        elif lift >= PRECURSOR_MIN_LIFT:   # the lift is there, the variety is not
+            why = (f"Moments like now led to only {out['followed_episodes']} different pickups "
+                   f"(it needs {PRECURSOR_MIN_FOLLOWED_EPISODES}).")
+        else:
+            why = (f"Moments like now led to a pickup {lift:.2f}x the usual rate "
+                   f"(it needs {PRECURSOR_MIN_LIFT:g}x).")
+        out["status_text"] = f"Pickup memory: no pattern yet. {why} Learned from {n} pickups."
     return out

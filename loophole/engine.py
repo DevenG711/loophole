@@ -90,6 +90,7 @@ def _memory_log(memory: dict | None) -> dict | None:
             "early": memory.get("early"),
             "lift": memory.get("lift"), "likely_app": memory.get("likely_app"),
             "text": memory.get("text"), "score": memory.get("score"),
+            "status": memory.get("status"), "match_share": memory.get("match_share"),
             "match_ts": [m.get("ts") for m in memory.get("matches") or []]}
 
 

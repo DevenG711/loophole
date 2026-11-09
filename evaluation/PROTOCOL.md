@@ -260,3 +260,56 @@ stall comes before a pickup") is the wrong shape for this user.
       log the pace was high at 1 of 231 moments, which was not an active
       moment, so the live rule still fired at 0 eval moments. We will not
       tune these settings on this file.
+15. **Pickup memory silence diagnosed (2026-11-08, post-hoc, no threshold
+    change).** The memory was "ready" all evening but never spoke (memory
+    text on 0 of ~560 live score ticks). We checked whether that is a defect
+    or a real absence of signal, on `data/events-deven.jsonl`. Numbers at the
+    first check (log to ~21:20); a rerun at 21:46, with one more pickup, moved
+    each by at most 0.01-0.2 and changed no conclusion.
+    - **Pickups:** 56 episodes, 22 usable as templates, 14 of those tagged
+      dev_testing. Most unusable pickups were filled in from ntfy while the
+      app was off (about 16:50-18:28 and 19:39-21:16), so there was no laptop
+      state before them; the rest had the laptop idle at the snapshot (rerun:
+      27 app off, 8 idle).
+    - **Base rate:** 118 of 459 past moments were followed by a pickup in
+      30-180 s = 0.257, so the highest possible lift is about 3.9. A 2x lift
+      is reachable in principle.
+    - **No signal in laptop state:** AUC of nearest-template distance 0.535
+      (templates within 5 min left out). Followed rate by distance band
+      [0, .5), [.5, .75), [.75, 1): lift 1.06 / 0.94 / 1.13. Single-feature
+      AUCs 0.45-0.55 (dwell_s, key_trend, scroll_trend, switches_5m, stall,
+      where_gap, idle). Leaving out dev_testing templates (the deviation 12
+      sensitivity row) gives the same AUC (0.537 at the rerun).
+    - **Live ticks:** lift median about 1.0, max 1.58, 0 ticks at or above
+      2.0 (rerun: max 1.79, still 0).
+    - **Templates are broad:** most templates match 25-48% of all moments
+      (a few, from unusual moments, 4-13%). 90% of moments are within the
+      match distance of some template.
+    - **Wider windows don't help:** they raise the base rate. With 30-600 s it
+      is 0.69, so the highest possible lift drops to 1.45 and 2x becomes
+      impossible.
+    - **Not changed, on purpose:** `PRECURSOR_MIN_LIFT`, `PRECURSOR_MATCH_DIST`,
+      `PRECURSOR_TARGET_S`, `PRECURSOR_MIN_FOLLOWED_EPISODES` and the
+      dev_testing handling (tag, never a filter). With AUC near 0.5 any
+      change that makes the memory speak would fire on noise, and any value
+      picked now would be fitted after looking at this file.
+    - **Changed (no gate):** `precursor.match` now returns `status`
+      ("learning", "no_match", "no_pattern", "pattern"), a plain
+      `status_text` (e.g. "no pattern yet ... 0.97x the usual rate (it needs
+      2x)"), `match_share` (matched / known past moments) and `followed_rate`
+      (matched_followed / matched). They use the same counters as the lift,
+      from moments whose outcome is known before t, so the silence is visible
+      instead of looking broken.
+    - **Demo text cap (stricter only):** `match_text` (demo mode only) is set
+      only when `match_share` <= 1 / `PRECURSOR_MIN_LIFT`. This is a math
+      fact, not a tuned number: lift = (mf/m)/(F/K) <= K/m = 1/match_share,
+      so when the matched moments cover more than half of all moments a 2x
+      lift is impossible and "This looks like 14:44" only means "you are at
+      your laptop". It uses no labels and can only hide text. On the rerun
+      replay it hid match_text on 32 of 324 matched ticks.
+    - eval_pickups prints a "memory signal check" block with these numbers
+      (post-hoc diagnostic, evaluation only, never feeds the live rule).
+    - **Limits:** one user, one day, 22 usable pickups (8 not dev_testing). A weak pattern of about 1.5x could stay hidden at this n.
+      Keeping the 2x gate lets the memory speak if a real pattern shows up
+      later. For this user, live nudges come from the pickup pace and the
+      break reminder, not from the memory.

@@ -647,6 +647,130 @@ def dev_testing_row(rows, pickups_by_person, dev_by_person, rate):
     return res
 
 
+def _rank_auc(pos, neg):
+    """P(a positive scores higher than a negative), ties half. None if a side is empty."""
+    if not pos or not neg:
+        return None
+    return sum((p > n) + 0.5 * (p == n) for p in pos for n in neg) / (len(pos) * len(neg))
+
+
+def memory_signal_check(mem_recs):
+    """Post-hoc diagnostic, evaluation only, never feeds the live rule
+    (PROTOCOL.md deviation 15): is there anything in laptop state before a
+    pickup for the pickup memory to find? Uses the memory's own pieces
+    (precursor._Log, match_vector, _scaled, _spreads, _distance) over the whole
+    log at once, so it is a look-back, not leave-future-out. Never calls
+    engine.score_now(). Returns a dict (also printed)."""
+    P = precursor
+    if not mem_recs:
+        return {"skipped": "no records"}
+    T = max(r["ts"] for r in mem_recs) + 1
+    log = P._Log(mem_recs, T)
+    if not log.inputs or not log.episodes:
+        return {"skipped": "no inputs or no pickups"}
+    lead = config.PRECURSOR_LEAD_S
+
+    # pickup breakdown: why each pickup is (not) a template
+    unusable = {"app_off": 0, "idle": 0, "little_input": 0}
+    for e in log.episodes:
+        if e["usable"]:
+            continue
+        s = e["ts"] - lead
+        i = bisect.bisect_left(log.input_ts, s) - 1
+        if i < 0 or s - log.input_ts[i] > P.MAX_STEP_S:
+            unusable["app_off"] += 1          # no input sample right before: tracker not running
+        elif (log.idle_at(s) or 0) >= config.SETTLED_MAX_IDLE_S:
+            unusable["idle"] += 1
+        else:
+            unusable["little_input"] += 1
+    n_dev = sum(1 for e in log.templates if e["dev_testing"])
+
+    # grid and base rate, same rules as precursor.match
+    lo, hi = config.PRECURSOR_TARGET_S
+    grid, m = [], log.input_ts[0] + config.PRECURSOR_LOOKBACK_S
+    while m < T:
+        idle = log.idle_at(m)
+        if idle is not None and idle < config.SETTLED_MAX_IDLE_S:
+            grid.append(m)
+        m += config.PRECURSOR_GRID_S
+    gv = {g: P._scaled(log.match_vector(g)) for g in grid}
+    spread = P._spreads(list(gv.values()))
+    ep_ts = [e["ts"] for e in log.episodes]
+
+    def followed(g, a=lo, b=hi):
+        return bisect.bisect_right(ep_ts, g + b) > bisect.bisect_right(ep_ts, g + a)
+    known = [g for g in grid if g + hi < T]
+    fl = {g: followed(g) for g in known}
+    base = sum(fl.values()) / len(known) if known else None
+    snaps = [(e, P._scaled(log.match_vector(e["ts"] - lead))) for e in log.templates]
+
+    def near_dist(g, only=None):
+        ds = [P._distance(gv[g], v, spread) for e, v in snaps
+              if abs(e["ts"] - lead - g) >= config.PRECURSOR_LOOKBACK_S and (only is None or only(e))]
+        return min(ds) if ds else float("inf")
+
+    cut = config.PRECURSOR_MATCH_DIST
+    nd = {g: near_dist(g) for g in known}
+    share_any = sum(1 for g in known if nd[g] <= cut) / len(known) if known else None
+    per_tmpl = []
+    for e, v in snaps:
+        s = e["ts"] - lead
+        mm = [g for g in known if abs(s - g) >= config.PRECURSOR_LOOKBACK_S
+              and P._distance(gv[g], v, spread) <= cut]
+        per_tmpl.append(len(mm) / len(known) if known else 0.0)
+
+    def dist_auc(dmap):     # closer to a template = higher score
+        fin = [(d, fl[g]) for g, d in dmap.items() if d != float("inf")]
+        return _rank_auc([-d for d, y in fin if y], [-d for d, y in fin if not y])
+    auc_all = dist_auc(nd)
+    auc_nodev = dist_auc({g: near_dist(g, only=lambda e: not e["dev_testing"]) for g in known})
+
+    bands = []
+    for a, b in [(0, .5), (.5, .75), (.75, 1.0), (1.0, float("inf"))]:
+        sel = [fl[g] for g in known if a <= nd[g] < b]
+        rate = sum(sel) / len(sel) if sel else None
+        bands.append({"band": [a, b], "n": len(sel), "followed_rate": rate,
+                      "lift": (rate / base) if (rate is not None and base) else None})
+    feat_auc = {}
+    for k in P.MATCH_FEATURES:
+        vals = [(gv[g][k], fl[g]) for g in known if gv[g].get(k) is not None]
+        feat_auc[k] = _rank_auc([x for x, y in vals if y], [x for x, y in vals if not y])
+    wide = {}
+    for a, b in [(30, 180), (30, 300), (30, 600)]:
+        kk = [g for g in grid if g + b < T]
+        r = sum(followed(g, a, b) for g in kk) / len(kk) if kk else None
+        wide[f"{a}-{b}"] = {"base_rate": r, "max_lift": (1 / r) if r else None}
+
+    def f2(x):
+        return "n/a" if x is None else f"{x:.3f}"
+    print("\n== memory signal check (post-hoc diagnostic, evaluation only, never feeds the live rule) ==")
+    print(f"pickups: {len(log.episodes)} episodes, {len(log.templates)} usable ({n_dev} of them "
+          f"dev_testing); unusable: {unusable['app_off']} app off at the snapshot, "
+          f"{unusable['idle']} laptop idle, {unusable['little_input']} too little input")
+    if base:
+        print(f"grid base rate (pickup in {lo}-{hi} s): {sum(fl.values())}/{len(known)} = {base:.3f}; "
+              f"highest possible lift {1 / base:.2f}")
+    print(f"share of grid moments within {cut:g} of some template: {f2(share_any)}; per template: "
+          f"min {min(per_tmpl):.2f}, median {float(np.median(per_tmpl)):.2f}, max {max(per_tmpl):.2f}")
+    print(f"AUC of nearest-template distance (templates within {config.PRECURSOR_LOOKBACK_S} s left "
+          f"out): {f2(auc_all)}")
+    print("  by distance band: " + "; ".join(
+        f"[{b['band'][0]:g},{b['band'][1]:g}) n={b['n']} rate={f2(b['followed_rate'])} "
+        f"lift={f2(b['lift'])}" for b in bands))
+    print("  single-feature AUC (higher value -> pickup): "
+          + ", ".join(f"{k} {f2(v)}" for k, v in feat_auc.items()))
+    print(f"  sensitivity, dev_testing=false templates only (deviation 12; a row, not a filter): "
+          f"AUC {f2(auc_nodev)}")
+    print("  base rate by target window: " + ", ".join(
+        f"{k} s {f2(v['base_rate'])} (max lift {f2(v['max_lift'])})" for k, v in wide.items()))
+    return {"post_hoc": True, "n_episodes": len(log.episodes), "n_usable": len(log.templates),
+            "n_usable_dev_testing": n_dev, "unusable": unusable, "n_known": len(known),
+            "n_followed": int(sum(fl.values())), "base_rate": base,
+            "share_matched_any": share_any, "share_matched_per_template": per_tmpl,
+            "auc_nearest": auc_all, "auc_nearest_no_dev_testing": auc_nodev,
+            "distance_bands": bands, "feature_auc": feat_auc, "target_windows": wide}
+
+
 def print_table(title, rows, results, rate, rate_src):
     n_pos = sum(r["y"] for r in rows)
     print(f"\n== {title} ==")
@@ -787,6 +911,14 @@ def main(argv=None):
         print(f"Pickup pace (post-hoc, deviation 14): pace was high (the other live nudge trigger) "
               f"at {n_pace} of {len(rows)} moments; personal cooldown known at {len(cds)} moments"
               + (f", median {np.median(cds) / 60:.1f} min." if cds else "."))
+    signal_check = {}
+    for person, src in mem_srcs.items():
+        print(f"{person}:", end="")
+        try:
+            signal_check[person] = memory_signal_check(src)
+        except Exception as e:  # noqa: BLE001
+            signal_check[person] = {"error": repr(e)}
+            print(f" memory signal check failed: {e!r}")
     print(f"BehaviorGPT pull (where_gap): {n_gap} of {len(rows)} moments have a cached answer with "
           f"scores (coverage {n_gap / len(rows):.0%}); the row uses only those."
           + (f" ({gap_error})" if gap_error else ""))
@@ -868,6 +1000,7 @@ def main(argv=None):
                              "n_text": sum(1 for r in rows if r.get("memory_text")),
                              "live_rule": "memory text or pickup pace (nudge.decide), since 2026-11-08",
                              "n_pace_high": sum(1 for r in rows if (r.get("pace") or {}).get("high"))},
+           "memory_signal_check": signal_check,
            "where_gap": {"post_hoc": True, "cache_only": True, "n_with_gap": n_gap,
                          "coverage": n_gap / len(rows), "error": gap_error},
            "logistic": lr,

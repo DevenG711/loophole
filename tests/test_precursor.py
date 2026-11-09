@@ -1,7 +1,8 @@
 """Pickup memory (loophole/precursor.py): no peeking, test pings ignored,
 pickups merged, silent until enough pickups and a real lift."""
 from loophole import precursor
-from loophole.config import PICKUP_MERGE_S, PRECURSOR_LEAD_S, PRECURSOR_MIN_EPISODES
+from loophole.config import (PICKUP_MERGE_S, PRECURSOR_LEAD_S, PRECURSOR_MIN_EPISODES,
+                             PRECURSOR_MIN_LIFT)
 
 T0 = 1_700_000_000.0
 
@@ -59,6 +60,11 @@ def test_no_peeking_past_t():
     later = recs + [phone(t + 1, "tiktok"), inp(t + 2, 10**6), app(t + 3, "Messages")]
     assert precursor.match(later, t) == before
     assert precursor.window_features(later, t) == precursor.window_features(recs, t)
+    # the status keys use only moments whose outcome is known before t
+    more = later + [phone(t, "instagram"), phone(t + 400, "tiktok"), phone(t + 900, "x")]
+    after = precursor.match(more, t)
+    for k in ("status", "status_text", "match_share", "followed_rate"):
+        assert after[k] == before[k], k
 
 
 def test_match_ignores_pickup_timing():
@@ -78,6 +84,14 @@ def test_silent_before_enough_pickups():
     recs = day(40, pattern_every=10)          # 4 pickups < PRECURSOR_MIN_EPISODES
     m = precursor.match(recs, T0 + 40 * 60 - 60)
     assert m["n_episodes"] < PRECURSOR_MIN_EPISODES and m["ready"] is False and m["text"] is None
+    assert m["status"] == "learning"
+    assert "learning" in m["status_text"]
+    assert f"{m['n_usable']} of {PRECURSOR_MIN_EPISODES}" in m["status_text"]
+
+
+def test_learning_status_with_no_pickups():
+    m = precursor.match(day(20), T0 + 19 * 60)
+    assert m["status"] == "learning" and f"0 of {PRECURSOR_MIN_EPISODES}" in m["status_text"]
 
 
 def test_speaks_up_when_a_repeated_pattern_returns():
@@ -95,6 +109,10 @@ def test_speaks_up_when_a_repeated_pattern_returns():
     assert m["n_usable"] == m["n_episodes"] == 17
     assert m["followed_episodes"] >= 3
     assert m["text"] and "Tiktok" in m["text"] and "learned from" in m["text"]
+    assert m["status"] == "pattern" and m["status_text"] == m["text"]
+    # lift <= 1 / match_share, so lift >= 2 forces match_share <= 0.5
+    assert m["match_share"] is not None and m["match_share"] <= 0.5
+    assert m["match_text"]
 
 
 def test_no_pattern_no_text():
@@ -104,6 +122,43 @@ def test_no_pattern_no_text():
     recs.sort(key=lambda r: r["ts"])
     m = precursor.match(recs, T0 + 179 * 60)
     assert m["ready"] and m["text"] is None
+    # A moment that does match past pickups (the Code/Slack switch rhythm),
+    # with a lift between 1 and 2: still no pattern, and the words say so.
+    m = precursor.match(recs, T0 + 178 * 60 + 30)
+    assert m["ready"] and m["matches"] and m["text"] is None
+    assert m["status"] == "no_pattern", m
+    assert m["lift"] is not None and m["lift"] < PRECURSOR_MIN_LIFT
+    assert f"{m['lift']:.2f}x the usual rate" in m["status_text"]
+    assert "no pattern yet" in m["status_text"]
+    assert 0 < m["followed_rate"] <= 1
+
+
+def test_no_match_status(monkeypatch):
+    recs = sorted(day(180) + [phone(T0 + k * 600 + 77, "tiktok") for k in range(1, 18)],
+                  key=lambda r: r["ts"])
+    monkeypatch.setattr(precursor, "PRECURSOR_MATCH_DIST", 0.0)
+
+    def mv(self, x):   # every moment differs from every other: nothing within 0.0
+        return {"dwell_s": float(x % 10_000), "key_trend": 0.0, "scroll_trend": 0.0,
+                "switches_5m": 0.0, "stall": 0.0, "where_gap": None}
+    monkeypatch.setattr(precursor._Log, "match_vector", mv)
+    m = precursor.match(recs, T0 + 179 * 60)
+    assert m["ready"] and m["matches"] == []
+    assert m["status"] == "no_match" and "doesn't look like any past pickup" in m["status_text"]
+    assert m["match_text"] is None and m["text"] is None and m["followed_rate"] is None
+
+
+def test_match_everywhere_gives_no_match_text(monkeypatch):
+    """When every moment matches, a 2x lift is impossible (lift <= 1/match_share),
+    so a match only means "at your laptop": no demo text either."""
+    recs = sorted(day(180) + [phone(T0 + k * 600 + 77, "tiktok") for k in range(1, 18)],
+                  key=lambda r: r["ts"])
+    monkeypatch.setattr(precursor._Log, "match_vector", lambda self, x: dict(A))
+    m = precursor.match(recs, T0 + 179 * 60)
+    assert m["ready"] and m["matches"]
+    assert m["match_share"] > 1 / PRECURSOR_MIN_LIFT
+    assert m["match_text"] is None and m["text"] is None
+    assert m["status"] == "no_pattern"
 
 
 def test_snapshot_has_all_features():
