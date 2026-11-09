@@ -73,21 +73,28 @@ def topic_warning(topic: str) -> str | None:
     return None
 
 
+def _logged_key(ntfy_id: str | None, ts: float, app: str | None) -> tuple:
+    """Key for "already in the log". The ntfy message id when we have it, so
+    two different messages in the same second (same app) are both kept.
+    Records written before we stored the id fall back to (ts, app)."""
+    return ("ntfy", ntfy_id) if ntfy_id else (ts, app)
+
+
 def resume_point(path: Path = EVENTS_FILE, now: float | None = None) -> tuple[float, set]:
     """Where to start polling after a (re)start, and what is already logged.
 
     Returns (since, logged). `since` is the ts of the last phone record that
     came from ntfy, so pickups made while the app was closed are not lost. It
     is never older than BACKFILL_MAX_S, and is "now" if there is no such
-    record. `logged` holds (ts, app) of ntfy records already in the log, so a
-    message fetched again is not written twice.
+    record. `logged` holds the keys of ntfy records already in the log (see
+    _logged_key), so a message fetched again is not written twice.
     """
     now = time.time() if now is None else now
     logged = set()
     last = None
     for rec in events.read(path, kinds={"phone"}):
         if rec.get("source") in ("shortcut", "test"):
-            logged.add((float(rec["ts"]), rec.get("app")))
+            logged.add(_logged_key(rec.get("ntfy_id"), float(rec["ts"]), rec.get("app")))
             last = rec["ts"] if last is None else max(last, rec["ts"])
     if last is None:
         return now, logged
@@ -95,12 +102,18 @@ def resume_point(path: Path = EVENTS_FILE, now: float | None = None) -> tuple[fl
 
 
 def poll_once(since: float, topic: str = NTFY_TOPIC, path: Path = EVENTS_FILE,
-              logged: set | None = None) -> list[dict]:
+              logged: set | None = None, cursor: dict | None = None) -> list[dict]:
     """Fetch messages since `since` (unix seconds) and write the new ones.
 
-    `logged` is a set of (ts, app) already in the log (see resume_point); those
-    are skipped. Returns the phone records written. Raises on network errors;
-    run() catches them.
+    `logged` is the set of keys already in the log (see resume_point): the
+    ntfy id, or (ts, app) for old records without one. Those are skipped.
+    Returns the phone records written (each with `ntfy_id`). Raises on
+    network errors; run() catches them.
+
+    If `cursor` is given, cursor["newest"] is set to the time of the newest
+    ntfy message in the response, including skipped (already logged) and
+    test messages, so the caller can ask only for newer ones next time. It
+    is not touched if the request fails or no message came back.
     """
     if not topic:
         return []
@@ -108,18 +121,28 @@ def poll_once(since: float, topic: str = NTFY_TOPIC, path: Path = EVENTS_FILE,
     resp = requests.get(url, timeout=10)
     resp.raise_for_status()
     written = []
+    newest = None
     for line in resp.text.splitlines():
         msg = parse_line(line)
-        if msg is None or msg["id"] in _seen:
+        if msg is None:
+            continue
+        newest = msg["time"] if newest is None else max(newest, msg["time"])
+        if msg["id"] in _seen:
             continue
         _seen.add(msg["id"])
         if logged is not None:
-            if (msg["time"], msg["app"]) in logged:
+            # Skip if this id is logged, or an old id-less record has the same
+            # (ts, app). Only the id is added, so a second message in the same
+            # second is not mistaken for this one.
+            if (_logged_key(msg["id"], msg["time"], msg["app"]) in logged
+                    or (msg["time"], msg["app"]) in logged):
                 continue
-            logged.add((msg["time"], msg["app"]))
+            logged.add(_logged_key(msg["id"], msg["time"], msg["app"]))
         source = "test" if msg.get("test") else "shortcut"
         written.append(events.write("phone", path, ts=msg["time"],
-                                    app=msg["app"], source=source))
+                                    app=msg["app"], source=source, ntfy_id=msg["id"]))
+    if cursor is not None and newest is not None:
+        cursor["newest"] = newest
     return written
 
 
@@ -154,10 +177,14 @@ def run(stop: threading.Event, topic: str = NTFY_TOPIC, path: Path = EVENTS_FILE
     since, logged = resume_point(path)
     while not stop.is_set():
         try:
-            for rec in poll_once(since, topic, path, logged):
-                # Move the window forward. ntfy's `since` may include the same
-                # second again; the seen-ids set stops duplicates.
-                since = max(since, rec["ts"])
+            cursor: dict = {}
+            written = poll_once(since, topic, path, logged, cursor)
+            # Move the window to the newest message seen, written or not, so
+            # an already-logged catch-up window is not fetched again every
+            # poll. ntfy's `since` may include the same second again; the
+            # seen-ids and `logged` sets stop duplicates.
+            since = max(since, cursor.get("newest", since))
+            for rec in written:
                 if on_record:
                     on_record(rec)
         except requests.RequestException as e:
@@ -188,8 +215,10 @@ if __name__ == "__main__":
         since = time.time()
         while True:
             try:
-                for rec in poll_once(since):
-                    since = max(since, rec["ts"])
+                cursor = {}
+                written = poll_once(since, cursor=cursor)
+                since = max(since, cursor.get("newest", since))
+                for rec in written:
                     print(f"{time.strftime('%H:%M:%S')}  phone pickup: {rec['app']}")
             except requests.RequestException as e:
                 print(f"poll failed: {e}")
