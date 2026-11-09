@@ -12,3 +12,7 @@ evaluation/results/pickups.json
 evaluation/results/titles.json
 # single-instance lock
 *.lock
+
+# Cloudflare Worker build files
+proxy/.wrangler/
+proxy/node_modules/

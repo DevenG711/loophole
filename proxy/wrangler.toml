@@ -1,0 +1,12 @@
+name = "loophole-proxy"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# Per-IP rate limit: 10 requests per 60 s. The app calls about twice a minute.
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
+
+# The API key is a secret, not a setting here:
+#   npx wrangler secret put UNBOXAI_API_KEY
