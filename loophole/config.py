@@ -7,10 +7,14 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-# The BehaviorGPT key everyone shares, so people who download the zip do not
-# need their own. Your own UNBOXAI_API_KEY in .env wins over it.
-SHARED_API_KEY = ""
-API_KEY = os.getenv("UNBOXAI_API_KEY") or SHARED_API_KEY or None
+# BehaviorGPT access. With your own UNBOXAI_API_KEY in .env, the app calls
+# BehaviorGPT directly. Without one, it goes through the shared proxy
+# (proxy/, a Cloudflare Worker that holds the key and allows only the ranking
+# call), so people who download the zip need no key and never see it.
+API_KEY = os.getenv("UNBOXAI_API_KEY") or None
+# Set DEFAULT_PROXY_URL after `npx wrangler deploy` (proxy/README.md).
+DEFAULT_PROXY_URL = ""
+PROXY_URL = (os.getenv("LOOPHOLE_PROXY_URL") or DEFAULT_PROXY_URL).rstrip("/") or None
 CATALOG_ID = os.getenv("LOOPHOLE_CATALOG_ID", "cat_35a0afc5ae400da9f74d27e2")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
 USER = os.getenv("LOOPHOLE_USER", "me")

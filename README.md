@@ -70,7 +70,8 @@ save it, quit Loophole (menu > **Quit Loophole**) and run `bash start.sh` again.
 | `LOOPHOLE_BREAK_MINUTES` | How long a break lasts, in minutes | `5` |
 | `LOOPHOLE_USER` | Name used for your log file, `data/events-<name>.jsonl` | your Mac user name |
 | `NTFY_TOPIC` | Your private phone channel. Your phone link is `https://ntfy.sh/<NTFY_TOPIC>`. If you change it, update every iPhone automation | random, made by setup |
-| `UNBOXAI_API_KEY` | Leave empty to use the shared BehaviorGPT key. Put your own here if you have one (free at [portal.unboxai.com](https://portal.unboxai.com)) | shared key |
+| `UNBOXAI_API_KEY` | Leave empty: Loophole reaches BehaviorGPT through its shared proxy, so you need no key. Put your own here if you have one (free at [portal.unboxai.com](https://portal.unboxai.com)) | empty |
+| `LOOPHOLE_PROXY_URL` | Only if you run your own proxy ([proxy/README.md](proxy/README.md)) | Loophole's proxy |
 
 Which **phone apps** count is set on the iPhone, not here: it's the apps you
 make automations for. See [docs/phone-setup.md](docs/phone-setup.md).
@@ -87,7 +88,7 @@ and the laptop sites and apps that count as distractions are in
 | `setup.sh` says Python 3.11 is needed | Run `curl -LsSf https://astral.sh/uv/install.sh \| sh`, open a new Terminal window, and run `bash setup.sh` again |
 | No dot in the menu bar | Look in the Terminal window for an error. On MacBooks with a notch, the dot can hide behind it: quit some other menu-bar apps |
 | "Another Loophole is already writing" | Loophole is already running. Use its menu > **Quit Loophole**, or close the other Terminal window |
-| "Likely next" is always empty | Check your internet connection. If you put your own `UNBOXAI_API_KEY` in `.env`, check it |
+| "Likely next" is always empty | Check your internet connection. The Terminal window says which BehaviorGPT route it uses when Loophole starts. If you put your own `UNBOXAI_API_KEY` in `.env`, check it |
 | Phone pickups don't show up | See "Test it" in [docs/phone-setup.md](docs/phone-setup.md) |
 | No notifications | System Settings > Notifications > find Python (or Loophole) and allow it. Nudges still show in the notch and the menu |
 

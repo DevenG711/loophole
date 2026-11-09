@@ -1080,9 +1080,13 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(f"[loophole] another Loophole is already writing to {config.EVENTS_FILE}. "
                          "Quit it first (two copies would log every event and pickup twice).")
     print(f"[loophole] writing events to {config.EVENTS_FILE}")
-    if not config.API_KEY:
-        print("[loophole] no BehaviorGPT API key: 'Likely next' stays empty. "
-              "Add UNBOXAI_API_KEY to .env (README.md, Settings).")
+    if config.API_KEY:
+        print("[loophole] BehaviorGPT: using your own UNBOXAI_API_KEY")
+    elif config.PROXY_URL:
+        print(f"[loophole] BehaviorGPT: using the shared proxy {config.PROXY_URL}")
+    else:
+        print("[loophole] BehaviorGPT is off: no proxy and no API key, so 'Likely next' "
+              "stays empty. Set LOOPHOLE_PROXY_URL or UNBOXAI_API_KEY in .env.")
     if config.NTFY_TOPIC:
         print(f"[loophole] phone link for the iPhone Shortcut: {phone_link()}")
     else:

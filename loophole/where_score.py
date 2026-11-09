@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 
 from .catalog import ROW, is_distraction
-from .config import (API_KEY, CATALOG_ID, DATA_DIR, HISTORY_LEN, HISTORY_MAX_AGE,
+from .config import (API_KEY, PROXY_URL, CATALOG_ID, DATA_DIR, HISTORY_LEN, HISTORY_MAX_AGE,
                      PHONE_HISTORY_MAX_AGE, RANK_LIMIT,
                      STICKY_DISTRACTIONS, TITLE_DOMAINS, TOP_N,
                      WHERE_PULL_MIN_Z, WHERE_REFERENCE_HISTORIES)
@@ -393,13 +393,19 @@ _client = None
 
 
 def _default_client():
-    """One shared client, made on first use. None if there is no API key."""
+    """One shared client, made on first use. Your own API key if .env has
+    one, else the shared proxy (config.PROXY_URL). None if neither is set."""
     global _client
-    if _client is None and API_KEY:
+    if _client is None and (API_KEY or PROXY_URL):
         from behaviorgpt import UnboxAIClient
         # The default read timeout is 120 s, which would freeze scoring (one
         # tick every 30 s). A slow answer is a missed tick, not a hang.
-        _client = UnboxAIClient(api_key=API_KEY, market="us", http_timeout=API_TIMEOUT_S)
+        if API_KEY:
+            _client = UnboxAIClient(api_key=API_KEY, market="us", http_timeout=API_TIMEOUT_S)
+        else:
+            # The proxy adds the real key; the client just needs a non-empty one.
+            _client = UnboxAIClient(api_key="loophole-proxy", market="us",
+                                    base_url=PROXY_URL + "/v1", http_timeout=API_TIMEOUT_S)
     return _client
 
 

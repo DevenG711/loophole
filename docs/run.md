@@ -32,7 +32,7 @@ First-time setup on a Mac: run `bash setup.sh` (see [README.md](../README.md)). 
 steps 1 and 2 below for you, then `bash start.sh` starts the app. By hand:
 
 1. Copy `.env.example` to `.env` and set `NTFY_TOPIC` to a long random name.
-   `UNBOXAI_API_KEY` can stay empty: `config.SHARED_API_KEY` is used then.
+   `UNBOXAI_API_KEY` can stay empty: the app then uses the shared proxy (`config.PROXY_URL`, see [proxy/README.md](../proxy/README.md)).
 2. Allow notifications from Python. rumps needs a bundle id in an `Info.plist` next to
    the Python binary. Run this once after making the virtualenv (it is not in git):
    ```bash

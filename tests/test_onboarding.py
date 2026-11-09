@@ -35,3 +35,26 @@ def test_env_example_has_every_setting_and_no_key():
 def test_setup_scripts_exist():
     for name in ("setup.sh", "start.sh", "README.md", "docs/phone-setup.md"):
         assert (ROOT / name).exists(), name
+
+
+def test_client_uses_own_key_then_proxy_then_nothing(monkeypatch):
+    from loophole import where_score as ws
+    monkeypatch.setattr(ws, "_client", None)
+    monkeypatch.setattr(ws, "API_KEY", None)
+    monkeypatch.setattr(ws, "PROXY_URL", None)
+    assert ws._default_client() is None
+
+    monkeypatch.setattr(ws, "PROXY_URL", "https://proxy.example")
+    c = ws._default_client()
+    assert c.base_url == "https://proxy.example/v1"
+    assert c.api_key == "loophole-proxy"     # a placeholder, never a real key
+
+    monkeypatch.setattr(ws, "_client", None)
+    monkeypatch.setattr(ws, "API_KEY", "own-key")
+    c = ws._default_client()
+    assert c.api_key == "own-key" and "unboxai.com" in c.base_url
+
+
+def test_no_api_key_in_repo_config():
+    text = (ROOT / "loophole" / "config.py").read_text()
+    assert "SHARED_API_KEY" not in text
