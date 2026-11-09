@@ -1,51 +1,98 @@
 # Phone setup (iPhone, about 5 minutes)
 
-Loophole learns when you pick up your phone. An iPhone Shortcut sends the
-app name to ntfy.sh each time you open a distracting app. The laptop checks
-ntfy.sh every few seconds.
+This step is optional, but it's how Loophole learns. Each time you open a
+time-wasting app on your iPhone, a Shortcuts automation sends that app's name
+to your private phone link. The laptop checks the link every 10 seconds and
+logs a "pickup". Loophole learns what the minute before your pickups looked
+like, and starts nudging after about 5 of them.
 
-## 1. Pick a topic name
+The phone and the laptop don't need to be on the same Wi-Fi. Both just need
+the internet.
 
-Your topic is set as `NTFY_TOPIC` in `.env`, for example
-`loophole-k7q2x9m4p1`. Use the same name on the phone.
+## 1. Get your phone link
 
-**Keep it random.** Anyone who knows the topic name can read it and post to it.
-Do not use your name or anything easy to guess. Use 20+ random characters
-(for example `python3 -c "import secrets; print('loophole-' + secrets.token_urlsafe(16))"`);
-the app prints a warning if the topic is shorter. Free ntfy.sh topics have no
-password, so the name is the only protection: a fake post becomes a fake pickup.
+`bash setup.sh` printed it and copied it to your clipboard. It looks like this:
 
-## 2. Make the automation
+```
+https://ntfy.sh/loophole-0c107f5ee0d839ec
+```
 
-1. Open **Shortcuts** → **Automation** tab → **New Automation** (or **+**).
-2. Choose **App**.
-3. Tap **Choose** and pick **Instagram, TikTok, YouTube, X, Reddit, Snapchat**.
-4. Tick **Is Opened**. Leave **Is Closed** off.
-5. Choose **Run Immediately**. Turn **Notify When Run** off. Tap **Next**.
-6. Tap **New Blank Automation**, then add the action **Get Contents of URL**.
-7. Set the URL to `https://ntfy.sh/<NTFY_TOPIC>` (your topic name).
-8. Tap the arrow to show more options:
-   - **Method:** POST
-   - **Request Body:** File
-   - **File:** tap it and pick **Shortcut Input**, then tap the variable and
-     change it to **Name** (the app name, e.g. "Instagram").
-9. Tap **Done**.
+Lost it? Click the Loophole dot in the menu bar > **Phone setup** >
+**Copy phone link**. Or open `.env` and put `https://ntfy.sh/` in front of the
+`NTFY_TOPIC` value.
 
-**Simpler option:** if the Shortcut Input does not give a clean app name, make
-one automation per app instead. Pick just that app in step 3, and set the
-Request Body to **Text** with a fixed name, like `Instagram`.
+Getting it onto the phone: if your iPhone and Mac use the same Apple ID, copy
+it on the Mac and paste on the phone (Universal Clipboard). If not, AirDrop it
+or send it to yourself in Notes.
 
-The laptop only needs the app name as plain text, for example `Instagram`.
+Keep the link private. Anyone who has it can see your pickups or send fake
+ones.
+
+## 2. Make one automation per app
+
+Do this once for each app you want Loophole to watch. Start with the two or
+three apps you open most when you should be working.
+
+1. Open the **Shortcuts** app and tap the **Automation** tab at the bottom.
+2. Tap **+** (top right). If you have no automations yet, tap **New Automation**.
+3. Scroll down and tap **App**.
+4. Tap **Choose**, pick the app (for example **Instagram**), then tap **Done**.
+5. Make sure **Is Opened** is ticked and **Is Closed** is not.
+6. Choose **Run Immediately**. Turn **Notify When Run** off. Tap **Next**.
+7. Tap **New Blank Automation**.
+8. Tap **Add Action**, search for **Get Contents of URL** and tap it.
+9. Tap the blue **URL** word and paste your phone link.
+10. Tap the **>** arrow next to the action to show more options, and set:
+    - **Method:** `POST`
+    - **Request Body:** `Form`
+    - Tap **Add new field** > **Text**. Set the key to `app` and the text to
+      the app's name, for example `Instagram`.
+11. Tap **Done** (top right).
+
+Repeat for the next app. Only the app name in step 10 changes.
+
+### Which app names to type
+
+Use these names so Loophole knows which app it was (capitals don't matter):
+
+`Instagram`, `TikTok`, `YouTube`, `X`, `Reddit`, `Snapchat`, `Facebook`,
+`WhatsApp`, `Messages`, `Discord`, `Pinterest`, `LinkedIn`, `Netflix`,
+`Twitch`, `Spotify`, `Robinhood`, `Chess`
+
+Any other name still counts as a pickup. Loophole just can't tell
+BehaviorGPT what the app was.
+
+### Short on time?
+
+Make a single automation instead: in step 4 tick all the apps at once, and in
+step 10 type `Phone` as the text. Every pickup then counts, but Loophole won't
+know which app it was. You can switch to one automation per app later.
 
 ## 3. Test it
 
-1. In the automation, tap the play button to run it once by hand.
-2. If iOS asks "Allow ... to connect to ntfy.sh?", tap **Always Allow**.
-   Without this, it will ask every time and the automation will not run silently.
-3. On the laptop, start a focus session in Loophole (the phone listener only
-   runs during a session). Open Instagram (or any app you picked) on the phone.
-   Click the menu-bar dot: the **Last phone** line should change to
-   "Last phone: Instagram, 0 min ago" within about 10 seconds.
+1. On the Mac, start Loophole (`bash start.sh`), click the dot and pick
+   **Start focus session**. The laptop only listens during a session.
+2. On the iPhone, open one of the apps you picked.
+3. The first time, iOS may ask **Allow "…" to connect to ntfy.sh?** Tap
+   **Always Allow**. Without it the automation stops and asks every time.
+4. Within about 10 seconds, click the Loophole dot. The **Last phone** line
+   should say something like "Last phone: Instagram, 0 min ago".
 
-You can also open `https://ntfy.sh/<NTFY_TOPIC>` in a browser to see the
-messages arrive.
+Still nothing? Open your phone link in a browser on the Mac. Each pickup shows
+up there as a message.
+
+- **No message on that page:** the phone isn't sending. Check the link in the
+  automation (no space at the end), that the method is `POST`, and that
+  **Run Immediately** is on.
+- **Message there, but no "Last phone" in the menu:** the Mac isn't listening.
+  Make sure a focus session is running, and that `NTFY_TOPIC` in `.env` matches
+  the end of the link. If you edited `.env`, quit and restart Loophole.
+
+You can also check the laptop side without the phone: **Phone setup** >
+**Send test ping**. During a session the **Last phone** line shows
+"Test (test ping)". Test pings never count as pickups.
+
+## Changing apps later
+
+Edit or delete an automation in Shortcuts > **Automation**. If you change
+`NTFY_TOPIC` in `.env`, update the URL in every automation too.

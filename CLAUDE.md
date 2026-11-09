@@ -4,6 +4,7 @@ Hackathon project (Sundai #148, team of 2). Read [PLAN.md](PLAN.md) for what we'
 
 ## Commands
 
+- New-user setup: `bash setup.sh` then `bash start.sh` (what the website's zip steps say; see [README.md](README.md))
 - Tests: `.venv/bin/python -m pytest -q` (live API test: `LIVE=1 .venv/bin/python -m pytest -m live`)
 - Menu-bar app: `.venv/bin/python -m loophole.menubar` (`--demo` for stage)
 - Dashboard: `.venv/bin/streamlit run dashboard/app.py`

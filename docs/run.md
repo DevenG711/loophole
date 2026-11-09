@@ -28,9 +28,11 @@ All commands run from the repo root and use the project's virtualenv.
   Nudges from **Demo: show nudge now** are logged with `"staged": true`.
 - Events go to `data/events-<LOOPHOLE_USER>.jsonl`.
 
-First-time setup on a Mac:
+First-time setup on a Mac: run `bash setup.sh` (see [README.md](../README.md)). It does
+steps 1 and 2 below for you, then `bash start.sh` starts the app. By hand:
 
-1. Copy `.env.example` to `.env` and fill in `UNBOXAI_API_KEY` and `NTFY_TOPIC`.
+1. Copy `.env.example` to `.env` and set `NTFY_TOPIC` to a long random name.
+   `UNBOXAI_API_KEY` can stay empty: `config.SHARED_API_KEY` is used then.
 2. Allow notifications from Python. rumps needs a bundle id in an `Info.plist` next to
    the Python binary. Run this once after making the virtualenv (it is not in git):
    ```bash
