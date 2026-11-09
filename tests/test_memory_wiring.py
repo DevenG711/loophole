@@ -96,7 +96,8 @@ def test_engine_adds_memory_to_result_and_log(tmp_path, monkeypatch):
     out = engine.score_now(path=path, now=now, client=FailClient())
     assert out["memory"] == MEMORY and seen == [True]
     rec = [r for r in events.read(path) if r["kind"] == "score"][-1]
-    assert rec["memory"] == {"n_episodes": 20, "ready": True, "lift": 6.0,
+    assert rec["memory"] == {"n_episodes": 20, "n_usable": None, "n_dev_testing": None,
+                             "followed_episodes": None, "ready": True, "early": None, "lift": 6.0,
                              "likely_app": "Instagram", "text": MEMORY["text"],
                              "score": 2.0, "match_ts": [T0 - 900]}
 

@@ -99,8 +99,8 @@ def test_nudge_copy_matches_the_live_rule():
 
 
 def test_memory_text_has_no_statistics():
-    more = day(150, pattern_every=15)
-    t = T0 + (9 * 15 - 3) * 60 + 120
+    more = day(300, pattern_every=15)
+    t = T0 + (18 * 15 - 3) * 60 + 120
     m = precursor.match([r for r in more if r["ts"] < t], t)
     assert m["text"]
     assert "σ" not in m["text"] and "moments like this" not in m["text"]
@@ -169,3 +169,58 @@ def test_weak_ntfy_topics_get_a_warning():
 
 def test_pulse_only_frame_rate_is_lower():
     assert PULSE_FPS < MOVE_FPS
+
+
+# ---------------------------------------------------------------- round 3
+# (debated 2026-11-08: templates need laptop context, >= 3 different pickups
+# behind the lift, dev-testing is a tag only. User: ready at 5 usable pickups,
+# marked an early, less accurate guess until 15.)
+
+def test_backfilled_pickup_is_an_outcome_not_a_template():
+    recs = day(40)                                   # typing in Code for 40 min
+    later = T0 + 40 * 60 + 3 * 3600                  # a pickup 3 h later, laptop untouched
+    recs.append(phone(later, "instagram"))
+    log = precursor._Log(recs, later + 600)
+    assert [e["usable"] for e in log.episodes] == [False]
+    assert log.templates == []
+    m = precursor.match(recs, later + 600)
+    assert m["n_episodes"] == 1 and m["n_usable"] == 0 and m["ready"] is False
+
+
+def test_pickups_during_typing_are_templates():
+    recs = day(40) + [phone(T0 + 20 * 60, "tiktok")]
+    log = precursor._Log(sorted(recs, key=lambda r: r["ts"]), T0 + 39 * 60)
+    assert [e["usable"] for e in log.episodes] == [True]
+
+
+def test_ready_at_five_but_early_until_fifteen():
+    from loophole.config import PRECURSOR_CONFIDENT_EPISODES, PRECURSOR_MIN_EPISODES
+    assert (PRECURSOR_MIN_EPISODES, PRECURSOR_CONFIDENT_EPISODES) == (5, 15)
+    four = precursor.match(day(70, pattern_every=15), T0 + 69 * 60)       # 4 pickups
+    assert four["ready"] is False and four["early"] is False and four["text"] is None
+    more = day(160, pattern_every=15)                                       # 10 pickups
+    t = T0 + (10 * 15 - 3) * 60 + 120                                       # 2 min into the 10th pattern
+    m = precursor.match([r for r in more if r["ts"] < t], t)
+    assert m["n_usable"] == 9 and m["ready"] and m["early"]
+    assert m["text"] and "Early guess, less accurate" in m["text"]
+    full = day(300, pattern_every=15)
+    t = T0 + (18 * 15 - 3) * 60 + 120
+    m = precursor.match([r for r in full if r["ts"] < t], t)
+    assert m["ready"] and not m["early"] and "Early guess" not in (m["text"] or "")
+
+
+def test_dev_testing_is_tagged_not_filtered():
+    recs = day(40) + [app(T0 + 17 * 60, "Google Chrome", domain="ntfy.sh"),
+                      app(T0 + 18 * 60, "Code"), phone(T0 + 20 * 60, "tiktok")]
+    log = precursor._Log(sorted(recs, key=lambda r: r["ts"]), T0 + 39 * 60)
+    (e,) = log.episodes
+    assert e["dev_testing"] is True and e["usable"] is True and log.templates == [e]
+
+
+def test_menu_counts_usable_pickups():
+    assert mb.memory_status({"n_episodes": 6, "n_usable": 3, "ready": False}) == \
+        "Pickup memory: 3 of 5 pickups needed (6 in total)"
+    assert mb.memory_status({"n_episodes": 9, "n_usable": 7, "ready": True, "early": True}) == \
+        "Pickup memory: early guesses, less accurate (7 of 15 pickups) (9 in total)"
+    assert mb.memory_status({"n_episodes": 16, "n_usable": 16, "ready": True}) == \
+        "Pickup memory: learned from 16 pickups"
