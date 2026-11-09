@@ -313,3 +313,31 @@ stall comes before a pickup") is the wrong shape for this user.
       Keeping the 2x gate lets the memory speak if a real pattern shows up
       later. For this user, live nudges come from the pickup pace and the
       break reminder, not from the memory.
+16. **Pace nudge delivery (2026-11-08, post-hoc, after seeing the real log).**
+    A read-only replay of `data/events-deven.jsonl` showed the pace trigger
+    (deviation 14) could not fire: pace is high right after a burst of
+    pickups, when the laptop is idle, and all 8 high ticks were blocked by
+    the "away / just returned" gate. The current rule gave 0 nudges.
+    - **Back at the laptop:** pace nudges ignore the just-returned grace
+      (`RETURN_GRACE_S`) but still need idle <= `ACTIVE_WITHIN`. The memory
+      trigger keeps the full gate. The cooldown applies to both.
+    - **Pending spell:** a high-pace spell stays pending for `PACE_PENDING_S`
+      (= `PACE_WINDOW_S`, 10 min) after the pickup that made the pace high.
+      The spell is named by that pickup's time (`pending_ts`).
+    - **One nudge per spell:** no nudge when the last shown nudge is at or
+      after `pending_ts`.
+    - **Session:** spells from before the latest session start are ignored.
+    - **Phone distraction screen:** while a "... on your phone" screen is
+      open, the pace nudge is shown on that screen (one sentence more and a
+      break button) and logged as `nudge action=shown nudge_kind=pace
+      via=distraction`. App/web screens never carry it. No modal on top.
+    - No `PACE_*` threshold changed. The engine passes `idle_s=None` when
+      there are no input samples, so the pace trigger never fires without
+      proof the user is at the laptop.
+    - **Replay (same log, read-only):** current rule 0 nudges; new rule 3:
+      14:54:46 (engine path; this spell came before the screen feature
+      existed, the first distraction record is at 15:05), 15:32:48 and
+      19:38:24 (both on an open phone distraction screen).
+    - These nudges come after a pickup, so they are for awareness, not
+      prediction. eval_pickups should report `via=distraction` separately
+      (follow-up; the evaluation scripts are outside this change).

@@ -25,13 +25,14 @@ def _last_nudge_ts(records: list[dict]) -> float | None:
 
 def colour_for(do_nudge: bool, memory: dict | None, pace: dict | None = None) -> str:
     """Dot colour follows the pickup memory and pace. Red: nudge. Amber: the
-    memory recognises this moment, or your pickup pace is high, but it can't
-    nudge now (cooldown, or you just came back). Green: otherwise."""
+    memory recognises this moment, or a high-pace spell is pending (pace.py),
+    but it can't nudge now (cooldown, away, or already nudged about it).
+    Green: otherwise."""
     if do_nudge:
         return "red"
     if memory and memory.get("text"):
         return "amber"
-    if pace and pace.get("high"):
+    if pace and pace.get("pending"):
         return "amber"
     return "green"
 
@@ -56,13 +57,16 @@ def _pace(records: list[dict], now: float) -> dict | None:
         return None
 
 
-def nudge_kind(do_nudge: bool, memory: dict | None, pace: dict | None) -> str | None:
-    """Which trigger fired: "memory" (checked first, as in nudge.decide) or "pace"."""
+def nudge_kind(do_nudge: bool, memory: dict | None, pace: dict | None,
+               active_recent: bool = True) -> str | None:
+    """Which trigger fired: "memory" (checked first, as in nudge.decide) or "pace".
+    As in nudge.decide, the memory only fires when active_recent; otherwise a
+    nudge with memory text present came from the pace trigger."""
     if not do_nudge:
         return None
-    if memory and memory.get("text"):
+    if memory and memory.get("text") and active_recent:
         return "memory"
-    if pace and pace.get("high"):
+    if pace and pace.get("pending"):
         return "pace"
     return None
 
@@ -108,9 +112,13 @@ def score_now(path: Path = EVENTS_FILE, now: float | None = None, client=None) -
     memory = _memory(records, now)
     pace = _pace(records, now)
 
+    # features() reports idle_s=0.0 when there are no input samples; the pace
+    # trigger must not take that as "at the laptop", so pass None then.
+    has_inputs = any(r["kind"] == "input" for r in records)
     do_nudge, reason = nudge.decide(when, where["rank"], f["active_recent"],
-                                    _last_nudge_ts(records), now, memory=memory, pace=pace)
-    kind = nudge_kind(do_nudge, memory, pace)
+                                    _last_nudge_ts(records), now, memory=memory, pace=pace,
+                                    idle_s=f["idle_s"] if has_inputs else None)
+    kind = nudge_kind(do_nudge, memory, pace, f["active_recent"])
 
     colour = colour_for(do_nudge, memory, pace)
 

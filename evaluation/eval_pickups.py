@@ -25,8 +25,9 @@ Pre-registered vs tuned (see "Deviations" in PROTOCOL.md):
                   "just returned" rule. Tuned IN-SAMPLE on the files given here.
   live (memory)   the live rule since 2026-11-08 (PROTOCOL.md deviation 9):
                   nudge only when precursor.match(records before t, t)["text"]
-                  is set, or the pickup pace is high (pace.pace, deviation 14),
-                  and active_recent (no cooldown: we judge each moment).
+                  is set and active_recent, or a high-pace spell is pending
+                  (pace.pace, deviations 14 and 16) and idle_s <= ACTIVE_WITHIN
+                  (no cooldown: we judge each moment).
                   Leave-future-out by construction. POST-HOC.
 
 Labels (added 2026-11-08, also in the deviations note):
@@ -445,8 +446,11 @@ def nudge_memory(r):
     judge each moment."""
     memory = {"text": r.get("memory_text"), "ready": r.get("memory_ready"),
               "n_episodes": r.get("memory_n_episodes")}
+    # idle_s: the pace trigger uses "back at the laptop" (idle <= ACTIVE_WITHIN,
+    # no just-returned grace) like the live engine (deviation 16). Rows only
+    # exist at moments with input data, so idle_s is real here.
     return bool(nudge.decide(r["stall"], r.get("rank_tuned"), r["active_recent"], None, r["t"],
-                             memory=memory, pace=r.get("pace"))[0])
+                             memory=memory, pace=r.get("pace"), idle_s=r.get("idle_s"))[0])
 
 
 nudge_tuned = nudge_memory   # "tuned live" now means the live (memory) rule

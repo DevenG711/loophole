@@ -9,6 +9,12 @@ kind of moment was followed by a pickup clearly more often than usual
 The pace trigger and the personal cooldown (time between nudges = your usual
 gap between pickups) were added 2026-11-08 (PROTOCOL.md deviation 14).
 
+Pace is high right after a burst of pickups, when you are on the phone and
+the laptop is idle. So the pace trigger works on a "pending" spell (pace.py)
+and shows it once you are back: idle <= ACTIVE_WITHIN, without the
+just-returned grace the memory needs. At most one nudge per spell
+(deviation 16). The cooldown applies to both triggers.
+
 decide(...)         -> (nudge?, reason in plain English)   the live rule
 decide_when_where() -> the previous rule (stall AND BehaviorGPT rank), kept
                        for the evals' comparison rows
@@ -20,38 +26,63 @@ from .config import (ACTIVE_WITHIN, NUDGE_COOLDOWN, NUDGE_RANK_THRESHOLD,
 API_DOWN_FACTOR = 1.5
 
 
-def _blocked(active_recent: bool, last_nudge_ts: float | None, now: float,
-             cooldown: float = NUDGE_COOLDOWN) -> str | None:
+def _cooldown_block(last_nudge_ts: float | None, now: float,
+                    cooldown: float = NUDGE_COOLDOWN) -> str | None:
     if last_nudge_ts is not None and now - last_nudge_ts < cooldown:
         left = (cooldown - (now - last_nudge_ts)) / 60
         return f"Recently nudged; waiting {left:.0f} more min."
+    return None
+
+
+def _activity_block(active_recent: bool) -> str | None:
     if not active_recent:
         return (f"No input in the last {ACTIVE_WITHIN} s, or you just came back "
                 "from a pause, so you are away or settling back in.")
     return None
 
 
+def _blocked(active_recent: bool, last_nudge_ts: float | None, now: float,
+             cooldown: float = NUDGE_COOLDOWN) -> str | None:
+    return _cooldown_block(last_nudge_ts, now, cooldown) or _activity_block(active_recent)
+
+
 def decide(when: float, where_rank: int | None, active_recent: bool,
            last_nudge_ts: float | None, now: float, *,
-           memory: dict | None = None, pace: dict | None = None) -> tuple[bool, str]:
-    """Nudge when the pickup memory has a match worth showing, or when the
-    pickup pace is high. `pace` (pace.pace) also sets the cooldown.
+           memory: dict | None = None, pace: dict | None = None,
+           idle_s: float | None = None) -> tuple[bool, str]:
+    """Nudge when the pickup memory has a match worth showing (and you are
+    active, not just back), or when a high-pace spell is pending and you are
+    back at the laptop. `pace` (pace.pace) also sets the cooldown.
+
+    `idle_s` is seconds since the last input, or None when there is no input
+    data; then the pace trigger uses `active_recent` instead.
 
     `when` and `where_rank` are kept in the signature (callers pass them
     positionally) but no longer decide on their own: they are part of what the
     memory compares.
     """
     cooldown = (pace or {}).get("cooldown_s") or NUDGE_COOLDOWN
-    blocked = _blocked(active_recent, last_nudge_ts, now, cooldown)
+    blocked = _cooldown_block(last_nudge_ts, now, cooldown)
     if blocked:
         return False, blocked
-    if memory and memory.get("text"):
+    away = _activity_block(active_recent)
+    if memory and memory.get("text") and not away:
         if memory.get("early"):
             return True, ("Early guess (less accurate, few pickups so far): this moment looks "
                           "like the ones right before your past phone pickups.")
         return True, "This moment looks like the ones right before your past phone pickups."
-    if pace and pace.get("high"):
-        return True, pace.get("nudge_text") or "You are picking up your phone more than usual."
+    if pace and pace.get("pending"):
+        spell = pace.get("pending_ts")
+        if last_nudge_ts is not None and (spell is None or spell <= last_nudge_ts):
+            return False, "Already nudged about this burst of pickups."
+        back = idle_s <= ACTIVE_WITHIN if idle_s is not None else active_recent
+        if back:
+            return True, (pace.get("pending_text") or pace.get("nudge_text")
+                          or "You are picking up your phone more than usual.")
+        return False, ("Your pickup pace was high; the nudge will show when you are "
+                       "back at the laptop.")
+    if away:
+        return False, away
     if not memory or not memory.get("ready"):
         mem = memory or {}
         n = mem.get("n_usable", mem.get("n_episodes")) or 0

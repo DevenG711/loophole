@@ -95,6 +95,10 @@ PACE_HIGH_FACTOR = 2.0
 PACE_HIGH_MIN_COUNT = 3
 NUDGE_COOLDOWN_MIN = 3 * 60
 NUDGE_COOLDOWN_MAX = 20 * 60
+# A high-pace spell stays "pending" this long after the pickup that made the
+# pace high, so the nudge can wait until you are back at the laptop. Post-hoc,
+# PROTOCOL.md deviation 16 (no PACE_* threshold above changed).
+PACE_PENDING_S = PACE_WINDOW_S
 
 # Phone listener
 PHONE_TEST_TAG = "loophole_test"   # ntfy tag on "Send test ping" messages

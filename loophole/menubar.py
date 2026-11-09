@@ -16,6 +16,10 @@ What it does:
 - When the front app or tab is a distraction (DISTRACTION_DOMAINS/APPS), the
   island pins open: "Distraction detected. Put it away, take a walk" with an
   "I'm back" button. The time until "I'm back" counts as break time.
+  If a high-pace spell is pending (pace.py) while a PHONE distraction screen
+  is open, the pace nudge is shown on that screen (one sentence more and a
+  break button) and logged as `nudge action=shown nudge_kind=pace via=distraction`
+  (PROTOCOL.md deviation 16).
 - During a break the menu-bar title is a countdown. At the end we ask
   "Back to <work app>?" and bring that app to the front with `open -a`.
 
@@ -352,7 +356,8 @@ def island_view(*, in_session: bool, on_break: bool, colour: str, nudge_active: 
                 likely: list[str], reason: str, work_app: str | None,
                 momentum: str = "", memory_text: str = "",
                 pace_text: str = "", pace_nudge_text: str = "",
-                distraction: str | None = None, can_mark_work: bool = False) -> dict:
+                distraction: str | None = None, can_mark_work: bool = False,
+                distraction_pace_text: str = "") -> dict:
     """What the notch island shows. Pure, so tests can check it.
 
     Keys: colour, value (collapsed: dot + timer), headline, sub, progress,
@@ -364,12 +369,18 @@ def island_view(*, in_session: bool, on_break: bool, colour: str, nudge_active: 
                 "headline": f"Back to {work}?", "sub": "Your break is over. Nice reset.",
                 "buttons": [("back", f"Back to {work}", True), ("not_yet", "Not yet", False)]}
     if distraction and in_session and not on_break:
+        sub = (f"You opened {distraction}. Put it away, take a short walk "
+               "or get some water, and press the button when you're back.")
+        buttons = [("im_back", "I'm back", True)]
+        if distraction_pace_text:
+            # The pace nudge, shown on the screen that is already open.
+            sub += "\n\n" + distraction_pace_text
+            buttons.append(("break", f"{config.BREAK_MINUTES}-min break", False))
         return {"colour": "red", "value": "", "pinned": True, "pulse": True,
                 "headline": "Distraction detected",
-                "sub": (f"You opened {distraction}. Put it away, take a short walk "
-                        "or get some water, and press the button when you're back."),
+                "sub": sub,
                 "details": ["This time counts as a break, not a slip."],
-                "buttons": [("im_back", "I'm back", True)]
+                "buttons": buttons
                 + ([("is_work", "This is work", False)] if can_mark_work else [])}
     if not in_session:
         return {"colour": "grey", "value": "",
@@ -505,6 +516,9 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             self.back_prompt = False        # island is asking "Back to <app>?"
             self.distraction: dict | None = None   # app record we're asking about
             self.distraction_since: float | None = None
+            # Pace nudge shown on an open phone distraction screen (deviation 16)
+            self.distraction_nudge = False
+            self.distraction_pace_text = ""
             self._pending_distraction: dict | None = None   # from the tracker thread
             self.work_ok: set[str] = set()  # "This is work" answers, this session
             self._seen_app: dict | None = None
@@ -611,9 +625,14 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
                                         "memory_text": (memory or {}).get("text")
                                         or (self.demo and (memory or {}).get("match_text")) or "",
                                         "pace_text": pace.get("text") or "",
-                                        "pace_nudge_text": (pace.get("nudge_text") or ""
+                                        "pace_nudge_text": (pace.get("pending_text")
+                                                            or pace.get("nudge_text") or ""
                                                             if score.get("nudge_kind") == "pace"
                                                             else ""),
+                                        "pace_pending_text": (pace.get("pending_text") or ""
+                                                              if pace.get("pending") else ""),
+                                        "pace_pending_ts": (pace.get("pending_ts")
+                                                            if pace.get("pending") else None),
                                         "cooldown_s": pace.get("cooldown_s")})
 
         def on_tracker_tick(self, t, session=CURRENT) -> None:
@@ -659,6 +678,8 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
                         and not self.nudge_active and not self.distraction
                         and cooldown_over(self.last_nudge, time.time(), self.cooldown)):
                     self.show_nudge(staged=self.demo)
+            if self.session_start:
+                self._pace_on_distraction()
             if self.break_end is not None and time.time() >= self.break_end:
                 self.end_break()
             if (self.session_start and self.break_end is None and
@@ -681,6 +702,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             self.last_break = self.last_nudge = None
             self.score, self.view = None, {}
             self.distraction = self.distraction_since = None
+            self.distraction_nudge, self.distraction_pace_text = False, ""
             self._seen_app = None
             self.work_ok = set()
             with self._lock:
@@ -745,6 +767,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             self.nudge_active = self.nudge_staged = False
             self.back_prompt = False
             self.distraction = self.distraction_since = None
+            self.distraction_nudge, self.distraction_pace_text = False, ""
             self.score, self.view = None, {}
 
         def on_stop(self, _item) -> None:
@@ -831,16 +854,50 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             else:
                 self.on_im_back(None)
 
-        def on_im_back(self, _item) -> None:
+        def _pace_on_distraction(self) -> None:
+            """Show a pending pace spell on the open PHONE distraction screen
+            (deviation 16). The modal show_nudge never opens on top of that
+            screen, so without this the spell would be lost while the user is
+            on the phone. One per spell; the cooldown applies."""
+            spell = self.view.get("pace_pending_ts")
+            now = time.time()
+            if (self.distraction and self.distraction.get("kind") == "phone"
+                    and not self.distraction_nudge and self.break_end is None
+                    and spell and spell > (self.last_nudge or 0)
+                    and cooldown_over(self.last_nudge, now, self.cooldown)):
+                self.last_nudge = now
+                self.distraction_pace_text = self.view.get("pace_pending_text", "")
+                self.distraction_nudge = True
+                # Unstaged (except in --demo), so the engine's _last_nudge_ts
+                # uses up the spell and the cooldown stays in sync.
+                events.write("nudge", self.path, **nudge_record("shown", self.demo),
+                             nudge_kind="pace", via="distraction")
+                self._refresh_menu()
+
+        def _answer_distraction_nudge(self, action: str) -> None:
+            """Log the answer to a pace nudge shown on the distraction screen."""
+            if self.distraction_nudge:
+                events.write("nudge", self.path, **nudge_record(action, self.demo),
+                             nudge_kind="pace", via="distraction")
+            self.distraction_nudge, self.distraction_pace_text = False, ""
+
+        def on_distraction_break(self) -> None:
+            """'Break' on the distraction screen: close it, then a break."""
+            self._answer_distraction_nudge("break")
+            self.on_im_back(None, bring_back=False)
+            self.on_start_break(None)
+
+        def on_im_back(self, _item, bring_back: bool = True) -> None:
             if not self.distraction:
                 return
+            self._answer_distraction_nudge("dismiss")
             away = time.time() - (self.distraction_since or time.time())
             self.break_seconds += away
             self.last_break = time.time()
             events.write("distraction", self.path, action="back",
                          target=distraction_name(self.distraction), seconds=round(away))
             self.distraction = self.distraction_since = None
-            if self.work_app:
+            if self.work_app and bring_back:
                 bring_to_front(self.work_app)
             self._refresh_menu()
 
@@ -852,6 +909,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             key = work_key(self.distraction)
             if key:
                 self.work_ok.add(key)
+            self._answer_distraction_nudge("dismiss")
             away = time.time() - (self.distraction_since or time.time())
             events.write("distraction", self.path, action="work",
                          target=distraction_name(self.distraction), seconds=round(away))
@@ -917,6 +975,8 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
         def on_island(self, action: str) -> None:
             if action.startswith("start:"):
                 self.start_session(int(action.split(":", 1)[1]))
+            elif action == "break" and self.session_start and self.distraction:
+                self.on_distraction_break()
             elif action == "break" and self.session_start and self.break_end is None:
                 self.on_start_break(None)
             elif action == "fine":
@@ -1055,7 +1115,8 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
                     pace_nudge_text=self.view.get("pace_nudge_text", ""),
                     distraction=(distraction_name(self.distraction)
                                  if self.distraction else None),
-                    can_mark_work=bool(self.distraction and work_key(self.distraction))))
+                    can_mark_work=bool(self.distraction and work_key(self.distraction)),
+                    distraction_pace_text=self.distraction_pace_text))
 
     return LoopholeApp()
 
