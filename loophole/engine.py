@@ -15,17 +15,23 @@ from .config import EVENTS_FILE, SCORE_EVERY
 
 
 def _last_nudge_ts(records: list[dict]) -> float | None:
-    shown = [r["ts"] for r in records if r["kind"] == "nudge" and r.get("action") == "shown"]
+    """Time of the last nudge actually shown to the user. The menu bar writes
+    `nudge action=shown` only when it displays one (the engine only decides).
+    Staged nudges (demo button, --demo mode) don't start the cooldown."""
+    shown = [r["ts"] for r in records if r["kind"] == "nudge" and r.get("action") == "shown"
+             and not r.get("staged")]
     return max(shown) if shown else None
 
 
-def colour_for(do_nudge: bool, memory: dict | None) -> str:
-    """Dot colour follows the pickup memory. Red: nudge. Amber: the memory
-    recognises this moment but can't nudge now (cooldown, or you just came
-    back). Green: nothing here looks like your past pickups."""
+def colour_for(do_nudge: bool, memory: dict | None, pace: dict | None = None) -> str:
+    """Dot colour follows the pickup memory and pace. Red: nudge. Amber: the
+    memory recognises this moment, or your pickup pace is high, but it can't
+    nudge now (cooldown, or you just came back). Green: otherwise."""
     if do_nudge:
         return "red"
     if memory and memory.get("text"):
+        return "amber"
+    if pace and pace.get("high"):
         return "amber"
     return "green"
 
@@ -38,6 +44,27 @@ def _memory(records: list[dict], now: float) -> dict | None:
     except Exception:
         traceback.print_exc()
         return None
+
+
+def _pace(records: list[dict], now: float) -> dict | None:
+    """Pickup pace for this moment (pace.pace). Never stops the engine."""
+    try:
+        from . import pace
+        return pace.pace(records, now)
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+def nudge_kind(do_nudge: bool, memory: dict | None, pace: dict | None) -> str | None:
+    """Which trigger fired: "memory" (checked first, as in nudge.decide) or "pace"."""
+    if not do_nudge:
+        return None
+    if memory and memory.get("text"):
+        return "memory"
+    if pace and pace.get("high"):
+        return "pace"
+    return None
 
 
 def _fill_app_only_where(records: list[dict], now: float, client) -> None:
@@ -57,7 +84,10 @@ def _memory_log(memory: dict | None) -> dict | None:
     """Small version of the memory for the score record."""
     if not memory:
         return None
-    return {"n_episodes": memory.get("n_episodes"), "ready": memory.get("ready"),
+    return {"n_episodes": memory.get("n_episodes"), "n_usable": memory.get("n_usable"),
+            "n_dev_testing": memory.get("n_dev_testing"),
+            "followed_episodes": memory.get("followed_episodes"), "ready": memory.get("ready"),
+            "early": memory.get("early"),
             "lift": memory.get("lift"), "likely_app": memory.get("likely_app"),
             "text": memory.get("text"), "score": memory.get("score"),
             "match_ts": [m.get("ts") for m in memory.get("matches") or []]}
@@ -75,19 +105,23 @@ def score_now(path: Path = EVENTS_FILE, now: float | None = None, client=None) -
     _fill_app_only_where(records, now, client)
 
     memory = _memory(records, now)
+    pace = _pace(records, now)
 
     do_nudge, reason = nudge.decide(when, where["rank"], f["active_recent"],
-                                    _last_nudge_ts(records), now, memory=memory)
+                                    _last_nudge_ts(records), now, memory=memory, pace=pace)
+    kind = nudge_kind(do_nudge, memory, pace)
 
-    colour = colour_for(do_nudge, memory)
+    colour = colour_for(do_nudge, memory, pace)
 
     events.write("score", path=path, ts=now, when=when, features=f,
                  where_rank=where["rank"], where_share=where["share"],
                  top=where["top"], where_gap=where.get("gap"), pull_app=where.get("pull_app"),
                  pull_z=where.get("pull_z"), nudge=do_nudge, reason=reason, colour=colour,
-                 memory=_memory_log(memory))
-    if do_nudge:
-        events.write("nudge", path=path, ts=now, action="shown")
+                 memory=_memory_log(memory), nudge_kind=kind,
+                 pace=({k: v for k, v in pace.items() if k != "text"} if pace else None))
+    # The decision lives in the score record (nudge=do_nudge). A `nudge
+    # action=shown` record is written by the UI only when it really shows one
+    # (it may not: break, a nudge or distraction screen already up, cooldown).
 
     return {
         "ts": now,
@@ -107,9 +141,11 @@ def score_now(path: Path = EVENTS_FILE, now: float | None = None, client=None) -
         "pull_name": where.get("pull_name"),
         "pull_z": where.get("pull_z"),
         "nudge": do_nudge,
+        "nudge_kind": kind,              # "memory", "pace" or None
         "reason": reason,
         "colour": colour,
         "memory": memory,                # pickup memory (precursor.match), or None
+        "pace": pace,                    # pickup pace and personal cooldown (pace.pace), or None
     }
 
 

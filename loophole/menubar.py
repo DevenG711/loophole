@@ -40,7 +40,7 @@ from . import catalog, config, events
 
 SESSION_LENGTHS = (25, 50, 90)  # minutes offered in the menu
 
-# Demo mode: the stage demo can't wait 20 minutes for a second nudge.
+# Demo mode: the stage demo can't wait 10 minutes for a second nudge.
 # Not shorter: the demo thresholds sit below the median stall, so a 60 s gap
 # re-nudged right after "I'm fine".
 DEMO_COOLDOWN = config.DEMO_COOLDOWN     # seconds between nudges in demo mode
@@ -268,10 +268,11 @@ def friendly_names(top_ids: list[str], explain=None, limit: int = 2) -> list[str
     return [catalog.ROW[i][1] if i in catalog.ROW else i for i in ids]
 
 
-def nudge_message(likely: list[str]) -> str:
-    """The nudge text. The live trigger is the pickup memory (nudge.decide),
-    so say that, not "you've slowed down" (the stall score no longer decides)."""
-    base = "This looks like the minutes before your past phone pickups."
+def nudge_message(likely: list[str], pace_text: str = "") -> str:
+    """The nudge text. The live triggers are the pickup memory and the pickup
+    pace (nudge.decide), so say which, not "you've slowed down" (the stall
+    score no longer decides). `pace_text` is set when the pace trigger fired."""
+    base = pace_text or "This looks like the minutes before your past phone pickups."
     if likely:
         return (f"{base} {likely[0]} looks like your next move. "
                 f"Take a {config.BREAK_MINUTES}-minute break instead?")
@@ -279,13 +280,20 @@ def nudge_message(likely: list[str]) -> str:
 
 
 def memory_status(memory: dict | None) -> str:
-    """'Pickup memory: learned from 7 pickups' or '...: 2 of 5 pickups needed'."""
+    """'Pickup memory: learned from 17 pickups' or '...: 7 of 15 pickups needed'.
+    Counts usable pickups (laptop in use before them); says how many real
+    pickups there were in total when that differs."""
     if not memory:
         return "Pickup memory: -"
-    n = memory.get("n_episodes") or 0
+    total = memory.get("n_episodes") or 0
+    n = memory.get("n_usable", total) or 0
+    extra = f" ({total} in total)" if n != total else ""
+    if memory.get("ready") and memory.get("early"):
+        return (f"Pickup memory: early guesses, less accurate "
+                f"({n} of {config.PRECURSOR_CONFIDENT_EPISODES} pickups){extra}")
     if memory.get("ready"):
-        return f"Pickup memory: learned from {n} pickup{'s' if n != 1 else ''}"
-    return f"Pickup memory: {n} of {config.PRECURSOR_MIN_EPISODES} pickups needed"
+        return f"Pickup memory: learned from {n} pickup{'s' if n != 1 else ''}{extra}"
+    return f"Pickup memory: {n} of {config.PRECURSOR_MIN_EPISODES} pickups needed{extra}"
 
 
 def with_memory(message: str, memory_text: str) -> str:
@@ -338,6 +346,7 @@ def island_view(*, in_session: bool, on_break: bool, colour: str, nudge_active: 
                 remaining_s: float, break_left_s: float, bars: list[int],
                 likely: list[str], reason: str, work_app: str | None,
                 momentum: str = "", memory_text: str = "",
+                pace_text: str = "", pace_nudge_text: str = "",
                 distraction: str | None = None, can_mark_work: bool = False) -> dict:
     """What the notch island shows. Pure, so tests can check it.
 
@@ -390,9 +399,11 @@ def island_view(*, in_session: bool, on_break: bool, colour: str, nudge_active: 
     # The pickup memory is a memory, not an alarm: show it even while green.
     if memory_text:
         details.append("Heads-up: " + memory_text)
+    if pace_text:
+        details.append(pace_text)
     view["details"] = details
     if nudge_active:
-        view["sub"] = nudge_message(likely)
+        view["sub"] = nudge_message(likely, pace_nudge_text)
         view["buttons"] = [("break", f"{config.BREAK_MINUTES}-min break", True),
                            ("fine", "I'm fine", False), ("phone", "Grabbed phone", False)]
     else:
@@ -445,6 +456,11 @@ def _load(module: str):
 # The app
 # ---------------------------------------------------------------------------
 
+# Default session tag for the app's thread callbacks: "whatever session is
+# running now". Used by direct calls (tests); real threads pass their own id.
+CURRENT = object()
+
+
 def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
               island: bool = True):
     """Create the rumps App. rumps is imported here so tests can import this
@@ -474,6 +490,12 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             self.view: dict = {}            # momentum + likely names
             self._latest: tuple[dict, dict] | None = None
             self._lock = threading.Lock()
+            # Session ids (under _lock): each start_session gets a new id, and
+            # its threads' callbacks carry it. Results from an old session's
+            # threads (e.g. a slow score_now that ends after stop/start) are
+            # dropped. None = no session running.
+            self._session_counter = 0
+            self._current_session: int | None = None
             self._last_phone: dict | None = None   # written by the phone thread
             self.back_prompt = False        # island is asking "Back to <app>?"
             self.distraction: dict | None = None   # app record we're asking about
@@ -495,6 +517,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             self.i_reason = rumps.MenuItem("")   # engine's plain-English reason
             self.i_phone = rumps.MenuItem("Last phone: none yet")
             self.i_memory = rumps.MenuItem("Pickup memory: -")
+            self.i_pace = rumps.MenuItem("Pace: -")
             # Nudge actions, only visible while a nudge is active
             self.n_header = rumps.MenuItem("Nudge: take a break?")
             self.n_break = rumps.MenuItem(f"Start {config.BREAK_MINUTES}-min break",
@@ -517,7 +540,7 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             setup.add(rumps.MenuItem("Send test ping", callback=self.on_test_ping))
 
             items = [self.i_focused, self.i_momentum, self.i_likely, self.i_break,
-                     self.i_phone, self.i_memory, self.i_reason, None, self.n_header, self.n_break, self.n_fine, self.back,
+                     self.i_phone, self.i_pace, self.i_memory, self.i_reason, None, self.n_header, self.n_break, self.n_fine, self.back,
                      self.phone_item, self.stop_item, None, self.start_menu, setup]
             if demo:
                 items += [None,
@@ -542,9 +565,17 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             self.ticker.start()
 
         # ---- background -> main thread hand-off -------------------------
-        def on_score(self, score: dict) -> None:
+        def _is_current(self, session) -> bool:
+            """True if a callback tagged with `session` belongs to the running
+            session. CURRENT (the default for direct calls) always counts.
+            Call with self._lock held."""
+            return session is CURRENT or (session is not None
+                                          and session == self._current_session)
+
+        def on_score(self, score: dict, session=CURRENT) -> None:
             """Called by the engine on ITS thread. Do the slow file reading
-            here, then hand the result to the main thread via _latest."""
+            here, then hand the result to the main thread via _latest.
+            Dropped if `session` is not the running session."""
             now = time.time()
             bars: list[int] = []
             try:
@@ -561,30 +592,46 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             else:
                 likely = []
             memory = score.get("memory") or None
+            pace = score.get("pace") or {}
             with self._lock:
+                if not self._is_current(session):
+                    return   # stale: its session was stopped (maybe a new one started)
                 self._latest = (score, {"momentum": momentum, "likely": likely, "bars": bars,
                                         "reason": score.get("reason") or "",
                                         "memory_status": memory_status(memory),
                                         "memory_text": (memory or {}).get("text")
-                                        or (self.demo and (memory or {}).get("match_text")) or ""})
+                                        or (self.demo and (memory or {}).get("match_text")) or "",
+                                        "pace_text": pace.get("text") or "",
+                                        "pace_nudge_text": (pace.get("nudge_text") or ""
+                                                            if score.get("nudge_kind") == "pace"
+                                                            else ""),
+                                        "cooldown_s": pace.get("cooldown_s")})
 
-        def on_tracker_tick(self, t) -> None:
+        def on_tracker_tick(self, t, session=CURRENT) -> None:
             """Called by the tracker thread every sample. Flags a newly opened
-            distraction; the main-thread tick shows it."""
+            distraction; the main-thread tick shows it. Ignored if `session`
+            is not the running session."""
+            with self._lock:
+                if not self._is_current(session):
+                    return
             rec = t.last_app
             if rec is None or rec is self._seen_app:
                 return
             self._seen_app = rec
             if app_kind(rec) == "distraction" and work_key(rec) not in self.work_ok:
                 with self._lock:
-                    self._pending_distraction = rec
+                    if self._is_current(session):
+                        self._pending_distraction = rec
 
-        def on_phone_record(self, rec: dict) -> None:
-            """Called by the phone thread for each record it writes."""
+        def on_phone_record(self, rec: dict, session=CURRENT) -> None:
+            """Called by the phone thread for each record it writes. "Last
+            phone" is always updated (it is not per session); a distraction
+            is only raised for the running session."""
             with self._lock:
                 if self._last_phone is None or rec["ts"] >= self._last_phone["ts"]:
                     self._last_phone = rec
-                if phone_triggers_distraction(rec, time.time()):
+                if (self._is_current(session)
+                        and phone_triggers_distraction(rec, time.time())):
                     self._pending_distraction = rec
 
         def tick(self, _timer) -> None:
@@ -596,10 +643,13 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
                 self.show_distraction(pending)
             if latest and self.session_start:
                 self.score, self.view = latest
+                if not self.demo:
+                    # Personal cooldown: your usual gap between pickups (pace.py).
+                    self.cooldown = self.view.get("cooldown_s") or config.NUDGE_COOLDOWN
                 if (wants_nudge(self.score, self.demo) and self.break_end is None
                         and not self.nudge_active and not self.distraction
                         and cooldown_over(self.last_nudge, time.time(), self.cooldown)):
-                    self.show_nudge(engine_logged=bool(self.score.get("nudge")))
+                    self.show_nudge(staged=self.demo)
             if self.break_end is not None and time.time() >= self.break_end:
                 self.end_break()
             if (self.session_start and self.break_end is None and
@@ -625,31 +675,40 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             self._seen_app = None
             self.work_ok = set()
             with self._lock:
+                self._session_counter += 1
+                sid = self._current_session = self._session_counter
                 self._pending_distraction = None
-            self.stop_event = threading.Event()
+                self._latest = None
+            stop = self.stop_event = threading.Event()
             events.write("session", self.path, action="start", minutes=minutes)
 
+            # Each callback is bound to this session's id, so results that
+            # arrive after a stop (or after the next start) are dropped.
             tracker, phone, engine = _load("tracker"), _load("phone"), _load("engine")
             jobs = []
             if tracker and hasattr(tracker, "Tracker"):
                 jobs.append(("tracker", lambda s: tracker.Tracker(path=self.path).run(
-                    s, on_tick=self.on_tracker_tick)))
+                    s, on_tick=lambda t: self.on_tracker_tick(t, session=sid))))
             if phone and hasattr(phone, "run"):
-                jobs.append(("phone", lambda s: phone.run(s, path=self.path,
-                                                          on_record=self.on_phone_record)))
+                jobs.append(("phone", lambda s: phone.run(
+                    s, path=self.path,
+                    on_record=lambda rec: self.on_phone_record(rec, session=sid))))
             if engine and hasattr(engine, "run"):
-                jobs.append(("engine", lambda s: engine.run(s, on_score=self.on_score,
-                                                            path=self.path)))
+                jobs.append(("engine", lambda s: engine.run(
+                    s, on_score=lambda score: self.on_score(score, session=sid),
+                    path=self.path)))
             for name, job in jobs:
-                threading.Thread(target=self._guarded, args=(name, job), daemon=True,
+                threading.Thread(target=self._guarded, args=(name, job, stop), daemon=True,
                                  name=f"fg-{name}").start()
             print(f"[loophole] session started: {minutes} min, threads: "
                   f"{[n for n, _ in jobs]}")
 
-        def _guarded(self, name, job) -> None:
-            """Run a background loop; log crashes instead of killing the app."""
+        def _guarded(self, name, job, stop: threading.Event | None = None) -> None:
+            """Run a background loop; log crashes instead of killing the app.
+            `stop` is the session's own event, passed in at start so a fast
+            stop/start can't hand this thread the next session's event."""
             try:
-                job(self.stop_event)
+                job(stop if stop is not None else self.stop_event)
             except Exception as e:
                 print(f"[loophole] {name} thread crashed: {e!r}")
 
@@ -668,6 +727,10 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
                          minutes=int(self.focused_seconds() // 60))
             if self.stop_event:
                 self.stop_event.set()
+            with self._lock:
+                self._current_session = None   # late callbacks from its threads are dropped
+                self._latest = None
+                self._pending_distraction = None
             self.session_start = None
             self.break_end = None
             self.nudge_active = self.nudge_staged = False
@@ -684,16 +747,19 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             rumps.quit_application()
 
         # ---- nudge ------------------------------------------------------
-        def show_nudge(self, engine_logged: bool = False, staged: bool = False) -> None:
+        def show_nudge(self, staged: bool = False) -> None:
+            """Show a nudge and log `nudge action=shown`. This is the only
+            place that record is written: the engine only decides (score
+            record, nudge=True), so a decision we don't show is never counted.
+            staged=True for the demo button and for every --demo mode nudge
+            (looser rule), so the cooldown and evals leave them out."""
             self.nudge_active = True
             self.nudge_staged = staged
             self.last_nudge = time.time()
-            # The engine already logs "shown" when IT decides to nudge.
-            # Log it here only for nudges the menu bar decided (demo mode).
-            if not engine_logged:
-                events.write("nudge", self.path, **nudge_record("shown", staged))
+            events.write("nudge", self.path, **nudge_record("shown", staged))
             self._refresh_menu()   # dot goes red before the alert opens
-            message = with_memory(nudge_message(self.view.get("likely", [])),
+            message = with_memory(nudge_message(self.view.get("likely", []),
+                                                self.view.get("pace_nudge_text", "")),
                                   self.view.get("memory_text", ""))
             notify("Loophole", "Time for a real break?", message)
             if self.island:
@@ -887,9 +953,11 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             engine = _load("engine")
             if not engine or not hasattr(engine, "score_now"):
                 return
+            with self._lock:
+                sid = self._current_session   # score belongs to the session at click time
             def run():
                 try:
-                    self.on_score(engine.score_now(path=self.path))
+                    self.on_score(engine.score_now(path=self.path), session=sid)
                 except Exception as e:
                     print(f"[loophole] score_now failed: {e!r}")
             threading.Thread(target=run, daemon=True).start()
@@ -934,8 +1002,9 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             self.i_phone.title = last_phone_text(last_phone, now)
             self.i_reason.title = self.view.get("reason", "")
             self.i_memory.title = self.view.get("memory_status", "Pickup memory: -")
+            self.i_pace.title = self.view.get("pace_text") or "Pace: -"
 
-            for item in (self.i_momentum, self.i_likely, self.i_break, self.i_memory,
+            for item in (self.i_momentum, self.i_likely, self.i_break, self.i_memory, self.i_pace,
                          self.phone_item, self.stop_item):
                 item.hidden = not in_session
             self.i_reason.hidden = not (in_session and self.view.get("reason"))
@@ -959,6 +1028,8 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
                     reason=self.view.get("reason", ""), work_app=self.work_app,
                     momentum=self.view.get("momentum", ""),
                     memory_text=self.view.get("memory_text", ""),
+                    pace_text=self.view.get("pace_text", ""),
+                    pace_nudge_text=self.view.get("pace_nudge_text", ""),
                     distraction=(distraction_name(self.distraction)
                                  if self.distraction else None),
                     can_mark_work=bool(self.distraction and work_key(self.distraction))))
