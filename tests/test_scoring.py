@@ -204,7 +204,8 @@ def test_history_drops_old_events():
 def test_rank_skips_sticky_distractions():
     ids = ["f_zoom", "d_hulu", "f_vscode", "d_spotify_pod", "d_instagram"] + ["f_slack"] * 5
     out = where_score._summarise(ids)
-    assert out["rank"] == 4 and out["share"] == 0.3
+    assert out["rank"] == 4 and out["share"] == 0.1   # sticky items skipped in share too
+    assert where_score._summarise(ids, skip_sticky=False)["share"] == 0.3
 
 
 def test_just_returned_from_pause_is_not_active():
@@ -270,7 +271,7 @@ def test_decide_nudges_only_on_memory():
     ok, reason = nudge.decide(0.0, 30, True, None, T0, memory=MEM)
     assert ok is True and "past phone pickups" in reason
     ok, reason = nudge.decide(0.0, 30, True, None, T0, memory={"n_episodes": 2, "ready": False})
-    assert ok is False and "2 real pickups" in reason
+    assert ok is False and "2 of" in reason and "Still learning" in reason
 
 
 def test_decide_cooldown_and_away_block_memory():
@@ -308,9 +309,11 @@ def test_engine_writes_score_and_nudge(tmp_path, monkeypatch):
     out = engine.score_now(path=path, now=now + 1, client=client)
     assert out["nudge"] is True and out["colour"] == "red", out
     kinds = [r["kind"] for r in events.read(path) if r["ts"] == now + 1]
-    assert kinds == ["score", "nudge"]
+    assert kinds == ["score"]   # the engine only decides; the menu bar logs "shown"
 
-    # 30 s later: cooldown blocks it; amber because the memory still matches.
+    # The menu bar shows it and logs it. 30 s later: cooldown blocks the next
+    # one; amber because the memory still matches.
+    events.write("nudge", path, ts=now + 1.5, action="shown")
     out2 = engine.score_now(path=path, now=now + 31, client=client)
     assert out2["nudge"] is False and out2["colour"] == "amber"
 

@@ -19,8 +19,13 @@ Public functions:
   signal_from_specs(specs, c)   -> same, for specs you already have
   load_cache()                  -> the cache dict (re-read only on change)
 """
+import fcntl
 import hashlib
 import json
+import os
+import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -247,14 +252,18 @@ def _specs(records: list[dict], t: float) -> list[tuple]:
                        r.get("kind") == "app"
                        or (r.get("kind") == "phone" and r["ts"] >= t - PHONE_HISTORY_MAX_AGE))),
                   key=lambda r: r["ts"])
-    # Drop old events, but always keep the newest one: the tracker only writes
-    # on a switch, so 20 min in one app means that app is still where you are.
-    recs = [r for i, r in enumerate(recs)
-            if r["ts"] >= t - HISTORY_MAX_AGE or i == len(recs) - 1]
+    pairs = [(r, _spec_for_app(r) if r["kind"] == "app" else _spec_for_phone(r)) for r in recs]
+    pairs = [(r, s) for r, s in pairs if s]
+    # Drop old events, but always keep the newest laptop app that maps to an
+    # item: the tracker only writes on a switch, so 20 min in one app means
+    # that app is still where you are. (Not the newest raw record: that may be
+    # a phone pickup, or Finder, which is skipped.)
+    newest_app = max((i for i, (r, _) in enumerate(pairs) if r["kind"] == "app"), default=-1)
     specs = []
-    for r in recs:
-        spec = _spec_for_app(r) if r["kind"] == "app" else _spec_for_phone(r)
-        if spec and (not specs or specs[-1] != spec):
+    for i, (r, spec) in enumerate(pairs):
+        if r["ts"] < t - HISTORY_MAX_AGE and i != newest_app:
+            continue
+        if not specs or specs[-1] != spec:
             specs.append(spec)
     return specs[-HISTORY_LEN:]
 
@@ -321,11 +330,63 @@ def load_cache(path: Path | None = None) -> dict:
     return cache
 
 
-def _save_cache(path: Path, cache: dict) -> None:
+# The cache is written by the app (engine and demo threads) and by evaluation
+# scripts that may run as separate processes at the same time. So a save takes
+# a lock (threading.Lock for this process, flock on a side file for others),
+# re-reads the file, adds only this call's new entries and writes it through a
+# unique temp file. Nobody erases entries another writer added.
+_save_lock = threading.Lock()
+
+
+def _read_for_merge(path: Path) -> dict:
+    """The cache file as it is now, for a merge. Missing -> {}.
+    Corrupt -> backed up to <name>.corrupt-<ts> (with a warning), then {}.
+    Other read errors raise OSError, so we never overwrite what we can't read."""
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return {}
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except ValueError:
+        pass
+    backup = path.with_name(f"{path.name}.corrupt-{time.time_ns()}")
+    os.replace(path, backup)
+    print(f"warning: {path} was unreadable; moved it to {backup} and started a new cache",
+          file=sys.stderr)
+    return {}
+
+
+def _save_cache(path: Path, new_entries: dict) -> None:
+    """Add new_entries to the cache file without dropping other writers' keys."""
+    if not new_entries:
+        return
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cache))
-    tmp.replace(path)
+    with _save_lock, open(path.with_name(path.name + ".lock"), "a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            merged = _read_for_merge(path)
+            merged.update(new_entries)
+            fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(merged, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, path)
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            st = path.stat()
+            _memo[str(path)] = ((st.st_mtime_ns, st.st_size), merged)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 _client = None
@@ -355,7 +416,7 @@ def _summarise(ids: list[str], skip_sticky: bool = True) -> dict:
     rank = next((i for i, x in enumerate(ids)
                  if is_distraction(x) and x not in sticky), len(ids))
     top = ids[:TOP_N]
-    share = sum(1 for x in top if is_distraction(x)) / TOP_N
+    share = sum(1 for x in top if is_distraction(x) and x not in sticky) / TOP_N
     return {"rank": rank, "share": round(share, 3), "top": ids[:3]}
 
 
@@ -526,10 +587,15 @@ def score(records: list[dict], t: float, client=None, cache_path: Path | None = 
             ref = _ensure_reference(cache, client, cache_path)
         except Exception:
             ref = None
-    if source == "api" or (REFERENCE_KEY in cache and not had_ref):
+    new_entries = {}
+    if source == "api":
+        new_entries[key] = entry
+    if REFERENCE_KEY in cache and not had_ref:
+        new_entries[REFERENCE_KEY] = cache[REFERENCE_KEY]
+    if new_entries:
         try:
-            _save_cache(cache_path, cache)
-        except OSError:
+            _save_cache(cache_path, new_entries)
+        except Exception:   # disk full, permissions, lock trouble: never crash scoring
             pass
     return {**out, **_summarise(_ids(entry), skip_sticky), **_signal(entry, ref),
             "source": source}

@@ -177,6 +177,11 @@ class Tracker:
         url = title = None
         if self.read_browser and bundle in BROWSERS:
             url, title = browser_tab(bundle)
+            # The tab read failed (or a private tab) in the browser we were
+            # already in: not a move, so write nothing (one failed read used
+            # to look like two switches).
+            if url is None and self.last_key and self.last_key[0] == name:
+                url, title = self.last_key[1], self.last_key[2]
         self.app_record(name, bundle, url, title)
         self.last_input = events.write("input", self.path, **read_input())
 

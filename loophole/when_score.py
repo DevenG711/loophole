@@ -12,6 +12,7 @@ Public functions:
 """
 from .config import (ACTIVE_STEP_IDLE_S, ACTIVE_WITHIN, MIN_ACTIVE_S, RETURN_GAP_S, RETURN_GRACE_S,
                      SETTLED_APPS, SETTLED_DOMAINS, SETTLED_DWELL_S, SETTLED_MAX_IDLE_S)
+from .where_score import BROWSER_APPS, IGNORE_APPS
 
 # Kinds we are allowed to read. "phone" is deliberately missing.
 ALLOWED_KINDS = {"input", "app", "session"}
@@ -28,7 +29,9 @@ BREAK_GAP_S = 4 * 60     # an idle gap this long counts as a break
 BURST_KEYS = 40
 PAUSE_S = 45
 
-# Scroll-without-typing steps longer than this are capped (tracker gaps).
+# A step (time between two input samples) longer than this is a tracker gap
+# (restart, sleep, a stuck tick). Its counts can hold many minutes of input,
+# so it adds neither counts nor time to any rate (typing, scrolling, bursts).
 MAX_STEP_S = 10
 
 
@@ -56,7 +59,8 @@ def _steps(inputs):
 
 
 def _in_window(steps, t, window):
-    return [s for s in steps if s[1] > t - window]
+    """Steps ending in the window, minus tracker gaps (longer than MAX_STEP_S)."""
+    return [s for s in steps if s[1] > t - window and s[1] - s[0] <= MAX_STEP_S]
 
 
 def _active_rate_per_min(inputs, t, window):
@@ -65,17 +69,21 @@ def _active_rate_per_min(inputs, t, window):
     A step counts as active if the sample at its end saw input (of any kind)
     in the last ACTIVE_STEP_IDLE_S seconds. Idle minutes are left out, so
     coming back from a pause does not look like "typing slowed down".
+    A step longer than MAX_STEP_S (a tracker gap) adds neither keys nor time:
+    its keys were typed over minutes we cannot see.
     """
     keys, active_s = 0, 0.0
     for prev, cur in zip(inputs, inputs[1:]):
         if cur["ts"] <= t - window:
+            continue
+        if cur["ts"] - prev["ts"] > MAX_STEP_S:
             continue
         if cur.get("idle", {}).get("any", 0) >= ACTIVE_STEP_IDLE_S:
             continue
         a = prev.get("counts", {}).get("key", 0)
         b = cur.get("counts", {}).get("key", 0)
         keys += b - a if b >= a else b
-        active_s += min(cur["ts"] - max(prev["ts"], t - window), MAX_STEP_S)
+        active_s += cur["ts"] - max(prev["ts"], t - window)
     rate = keys / (active_s / 60) if active_s > 0 else 0.0
     return rate, active_s
 
@@ -86,11 +94,27 @@ def _place(rec):
 
 
 def _visits(apps):
-    """App records with title-only changes merged: list of (start_ts, place)."""
+    """App records with title-only changes merged: list of (start_ts, place).
+
+    Noise apps (IGNORE_APPS: lock screen, Finder, notifications, ...) are
+    skipped. A browser record with no domain (the tab read failed, or a
+    private tab) is "no change" while you are already in that browser; if you
+    just switched to it, it starts a visit whose domain is filled in by the
+    next record that has one, without counting a second switch.
+    """
     visits = []
     for r in apps:
-        place = _place(r)
-        if not visits or visits[-1][1] != place:
+        app, domain = place = _place(r)
+        if app in IGNORE_APPS:
+            continue
+        last = visits[-1][1] if visits else None
+        if app in BROWSER_APPS and last and last[0] == app:
+            if not domain:
+                continue                              # failed read: still there
+            if not last[1]:
+                visits[-1] = (visits[-1][0], place)   # domain finally known
+                continue
+        if last != place:
             visits.append((r["ts"], place))
     return visits
 
@@ -158,7 +182,7 @@ def features(records: list[dict], t: float) -> dict:
     scroll_no_type = 0.0
     for t0, t1, d in _in_window(steps, t, NOW_WINDOW):
         if d["scroll"] > 0 and d["key"] == 0:
-            scroll_no_type += min(t1 - max(t0, t - NOW_WINDOW), MAX_STEP_S)
+            scroll_no_type += t1 - max(t0, t - NOW_WINDOW)
 
     # Time on the current app/site (a tab title changing, like "(2) Inbox",
     # is not a move), and time there with no typing/clicking.
@@ -166,9 +190,10 @@ def features(records: list[dict], t: float) -> dict:
     dwell_s = t - visits[-1][0] if visits else no_work_s
     dwell_no_input_s = min(dwell_s, no_work_s)
 
-    # App/site switches per minute over the last 5 min.
+    # App/site switches per minute over the last 5 min (or since the session
+    # started, at least 1 min). Count and divide over the same span.
     switch_span = max(60.0, min(RECENT_WINDOW, t - session_start))
-    switches = sum(1 for ts, _ in visits if ts > t - RECENT_WINDOW)
+    switches = sum(1 for ts, _ in visits if ts > t - switch_span)
     switches_per_min = switches / (switch_span / 60)
 
     # Settled: staying on one thing and still touching the computer (reading
@@ -179,11 +204,16 @@ def features(records: list[dict], t: float) -> dict:
     settled = bool(visits) and dwell_s >= SETTLED_DWELL_S and (
         on_call or (inputs and idle_s < SETTLED_MAX_IDLE_S))
 
-    # Minutes since the last break (idle >= 4 min, a tracker gap >= 4 min,
-    # or session start).
+    # Minutes since the last break (idle >= 4 min, a tracker gap >= 4 min
+    # with no input across it, or session start). A gap where keys, clicks or
+    # scrolls went up was not a break: you worked while the tracker was quiet.
+    # Lid closed / asleep: counters do not move, so that still counts.
     last_break = session_start
-    for t0, t1, _ in steps:
-        if t1 - t0 >= BREAK_GAP_S:
+    for (t0, t1, d), cur in zip(steps, inputs[1:]):
+        if t1 - t0 < BREAK_GAP_S:
+            continue
+        idle_after = cur.get("idle", {}).get("any", 0)
+        if idle_after >= BREAK_GAP_S or d["key"] + d["click"] + d["scroll"] == 0:
             last_break = max(last_break, t1)
     for r in inputs:
         if r.get("idle", {}).get("any", 0) >= BREAK_GAP_S:

@@ -132,7 +132,8 @@ def test_poll_once_writes_new_messages_once(tmp_path):
     assert second == []
     recs = list(events.read(path))
     assert len(recs) == 2
-    assert recs[0] == {"ts": 100.0, "kind": "phone", "app": "Instagram", "source": "shortcut"}
+    assert recs[0] == {"ts": 100.0, "kind": "phone", "app": "Instagram", "source": "shortcut",
+                       "ntfy_id": "m1"}
 
 
 def test_poll_once_without_topic_does_nothing(tmp_path):
