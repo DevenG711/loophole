@@ -136,6 +136,7 @@ h3{font-size:21px;line-height:1.3;font-weight:650;font-stretch:96%}
   background:var(--sheet);border:1px solid var(--ink-3);box-shadow:var(--shadow);
   aspect-ratio:16/10;min-height:340px;outline:none;
 }
+@media (max-width:600px){ .screen:not(.still){aspect-ratio:auto;height:400px} }
 .mbar{
   position:absolute;inset:0 0 auto 0;height:30px;display:flex;align-items:center;gap:16px;
   padding:0 14px;font-family:var(--f-sys);font-size:12.5px;
@@ -403,7 +404,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:8px 28px;justify-content:space-betw
       </div>
     </div>
 
-    <p class="rule-line">A nudge needs one of those two warning signs. You also have to have touched the keyboard or mouse in the last 10 seconds, and it won’t nudge you again until about your usual time between pickups has passed.</p>
+    <p class="rule-line">A nudge needs one of those two warning signs, and you must have used the keyboard or mouse in the last 10 seconds. After a nudge, it waits about your usual time between pickups before it asks again.</p>
 
     <table class="tt" id="tt">
       <caption>Hover over a square, or tab to it, and the dot at the top of the page shows that colour.</caption>
@@ -428,28 +429,26 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:8px 28px;justify-content:space-betw
 <section class="sec" id="download" aria-labelledby="h-dl">
   <div class="wrap">
     <h2 id="h-dl">Running in about five minutes</h2>
-    <p class="need">You’ll need macOS, Python 3.11 or newer, and a BehaviorGPT API key from UnboxAI. An iPhone is optional, but it’s how Loophole learns.</p>
+    <p class="need">You’ll need a Mac. No API key: Loophole comes with one. An iPhone is optional, but it’s how Loophole learns your pickups.</p>
     <div class="dl-row"><a class="btn big" href="https://github.com/DevenG711/loophole/archive/refs/heads/main.zip">Get the .zip</a></div>
 
     <ol class="steps">
       <li>
-        <p>Unzip it and open Terminal in the new folder.</p>
-        <div class="cmd"><code>cd loophole-main</code><button class="copy" type="button" data-copy="cd loophole-main">Copy</button></div>
+        <p>Unzip it. Open Terminal, type <code>cd</code> and a space, drag the <code>loophole-main</code> folder onto the window, and press Return.</p>
       </li>
       <li>
-        <p>Install what it needs. No uv? <code>pip install -e .</code> works too.</p>
-        <div class="cmd"><code>uv sync</code><button class="copy" type="button" data-copy="uv sync">Copy</button></div>
+        <p>Run setup. It installs everything, makes your settings file, and prints your private <b>phone link</b> (it also copies it for you). If your Mac needs a newer Python, it tells you the one command to run.</p>
+        <div class="cmd"><code>bash setup.sh</code><button class="copy" type="button" data-copy="bash setup.sh">Copy</button></div>
       </li>
       <li>
-        <p>Make your settings file, then open <code>.env</code> and fill in <code>UNBOXAI_API_KEY</code> and <code>NTFY_TOPIC</code>.</p>
-        <div class="cmd"><code>cp .env.example .env</code><button class="copy" type="button" data-copy="cp .env.example .env">Copy</button></div>
+        <p>Start it. A grey dot shows up in your menu bar. Keep the Terminal window open while it runs.</p>
+        <div class="cmd"><code>bash start.sh</code><button class="copy" type="button" data-copy="bash start.sh">Copy</button></div>
       </li>
       <li>
-        <p>Start it. The island appears at the top of your screen and a dot appears in the menu bar. Pick a 25, 50 or 90-minute session.</p>
-        <div class="cmd"><code>.venv/bin/python -m loophole.menubar</code><button class="copy" type="button" data-copy=".venv/bin/python -m loophole.menubar">Copy</button></div>
+        <p>Set up your iPhone (optional, 5 minutes). In the Shortcuts app, make an automation for each app you want watched: <b>Automation › + › App</b>, pick the app, <b>Is Opened</b>, <b>Run Immediately</b>. Its one action is <b>Get Contents of URL</b>: paste your phone link, set <b>Method</b> to POST and <b>Request Body</b> to Form, and add a text field with key <code>app</code> and the app’s name, like <code>Instagram</code>. Lost the link? Menu › Phone setup › Copy phone link. The <a href="https://github.com/DevenG711/loophole/blob/main/docs/phone-setup.md">phone setup guide</a> has every tap and a test.</p>
       </li>
       <li>
-        <p>Add one Shortcuts automation on your iPhone that pings your laptop when Instagram, TikTok, YouTube, X, Reddit or Snapchat opens. The <a href="https://github.com/DevenG711/loophole/blob/main/docs/phone-setup.md">phone setup guide</a> walks you through it.</p>
+        <p>Change break length, session lengths and more in the settings file: menu › Phone setup › Open settings file. The <a href="https://github.com/DevenG711/loophole#settings">settings list</a> explains each one.</p>
       </li>
     </ol>
     <p class="after">To look back at a session, there’s a dashboard. It shows the apps you used, BehaviorGPT’s guesses, each nudge and each phone pickup on one timeline.</p>
