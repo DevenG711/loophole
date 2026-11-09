@@ -25,16 +25,26 @@ Pre-registered vs tuned (see "Deviations" in PROTOCOL.md):
                   "just returned" rule. Tuned IN-SAMPLE on the files given here.
   live (memory)   the live rule since 2026-11-08 (PROTOCOL.md deviation 9):
                   nudge only when precursor.match(records before t, t)["text"]
-                  is set, and active_recent (no cooldown: we judge each moment).
+                  is set, or the pickup pace is high (pace.pace, deviation 14),
+                  and active_recent (no cooldown: we judge each moment).
                   Leave-future-out by construction. POST-HOC.
 
 Labels (added 2026-11-08, also in the deviations note):
-  - phone records with source == "test" are test pings and are dropped;
+  - phone records with a source in precursor.NOT_EPISODE_SOURCES are not
+    pickups: "test" pings, and "button"/"hotkey" self-reports (they usually
+    answer a nudge). Dropped counts are reported per source. The where history
+    still sees button/hotkey records, as the live app does;
   - --skip-pickups HH:MM-HH:MM drops phone records in that local time range
     (repeatable), e.g. Shortcut setup testing;
-  - phone records closer than config.PICKUP_MERGE_S are ONE pickup episode,
-    timed at its first record. Labels and counts use episodes, not records.
-  - nudge records with staged: true (demo) are ignored.
+  - a phone record less than config.PICKUP_MERGE_S after an episode's FIRST
+    record joins that episode (no chaining; same rule as precursor). Episodes
+    are timed at their first record. Labels and counts use episodes.
+  - nudge records with staged: true (demo button, --demo mode) are ignored.
+  - "caught" in subset tables counts only pickups inside that subset's scored
+    range.
+  - pickups precursor tags `dev_testing` are counted and get one sensitivity
+    row (memory with their positives left out). Tag only, never a filter.
+  - results/pickups.json records each log's size and last record time.
 
 Post-hoc (added 2026-11-08, PROTOCOL.md deviation 7-8):
   - "pickup memory (post-hoc, leave-future-out)": precursor.match(records
@@ -61,7 +71,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from loophole import config, events, nudge, when_score, where_score  # noqa: E402
+from loophole import config, events, nudge, pace, precursor, when_score, where_score  # noqa: E402
 from evaluation.eval_titles import BudgetClient, auc, bootstrap_ci, fmt, make_client  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -79,7 +89,8 @@ SMALL_N = 20         # below this many positives, say plainly that n is tiny
 BURST_WINDOW = 60    # >= BURST_APPS different apps within this many s ...
 BURST_APPS = 3       # ... looks like a test burst, not a real pickup
 MEMORY_ROW = "pickup memory (post-hoc, leave-future-out)"
-MEMORY_RULE_ROW = "nudge rule [live: memory text, post-hoc]"
+MEMORY_RULE_ROW = "nudge rule [live: memory text or pace, post-hoc]"
+PACE_ROW = "pickups in last 10 min (pace, post-hoc)"
 OLD_RULE_ROW = "nudge rule [old when+where, rank<=%d]" % config.NUDGE_RANK_THRESHOLD
 GAP_ROW = "BehaviorGPT pull (where_gap, cache only)"
 
@@ -172,29 +183,44 @@ def phone_app(rec):
 
 def pickup_records(recs, skip=()):
     """Phone records that count as real pickups, plus counts of what was dropped.
-    Drops source == "test" (test pings) and records inside a --skip-pickups range."""
-    kept, n_test, n_skip = [], 0, 0
+    Drops every source in precursor.NOT_EPISODE_SOURCES (test pings, "Grabbed
+    phone" button and hotkey self-reports: they usually answer a nudge, so as
+    labels they would make a nudge look like a correct prediction) and records
+    inside a --skip-pickups range. Returns (kept, {"dropped_source": {source: n},
+    "skipped_range": n})."""
+    kept, by_source, n_skip = [], {}, 0
     for r in recs:
         if r.get("kind") != "phone":
             continue
-        if r.get("source") == "test":
-            n_test += 1
+        src = r.get("source")
+        if src in precursor.NOT_EPISODE_SOURCES:
+            by_source[src] = by_source.get(src, 0) + 1
         elif in_skip(r["ts"], skip):
             n_skip += 1
         else:
             kept.append(r)
     kept.sort(key=lambda r: r["ts"])
-    return kept, {"test_source": n_test, "skipped_range": n_skip}
+    return kept, {"dropped_source": by_source, "skipped_range": n_skip}
+
+
+def where_phone_records(recs, skip=()):
+    """Phone records the "where" history may see: as the live where_score,
+    everything but test pings (button/hotkey presses stay in the history),
+    minus --skip-pickups ranges. Sorted by ts."""
+    return sorted((r for r in recs if r.get("kind") == "phone" and r.get("source") != "test"
+                   and not in_skip(r["ts"], skip)), key=lambda r: r["ts"])
 
 
 def merge_episodes(phone_recs, gap=None):
-    """Phone records closer than `gap` s (default config.PICKUP_MERGE_S) to the
-    previous one form one pickup episode. Its time is the FIRST record's time.
+    """Pickup episodes, same rule as precursor._episode_list: a record joins
+    the current episode only if it is less than `gap` s (default
+    config.PICKUP_MERGE_S) after the episode's FIRST record; otherwise it
+    starts a new one (no chaining). The episode's time is its first record.
     Returns [{"ts", "end", "n", "events": [(ts, app), ...]}]."""
     gap = config.PICKUP_MERGE_S if gap is None else gap
     eps = []
     for r in sorted(phone_recs, key=lambda r: r["ts"]):
-        if eps and r["ts"] - eps[-1]["end"] < gap:
+        if eps and r["ts"] - eps[-1]["ts"] < gap:
             eps[-1]["end"] = r["ts"]
             eps[-1]["n"] += 1
             eps[-1]["events"].append((r["ts"], phone_app(r)))
@@ -258,6 +284,8 @@ def add_memory(rows, mem_srcs):
         r["memory_ready"] = bool(m.get("ready"))
         r["memory_n_episodes"] = m.get("n_episodes")
         r["memory_text"] = m.get("text")   # the live nudge fires on this
+        # Pickup pace (deviation 14): same past records, same filtered pickups.
+        r["pace"] = pace.pace(past, r["t"])
     return None
 
 
@@ -313,9 +341,10 @@ def moments_for(person, recs, skip=()):
     feats_ts = [r["ts"] for r in feats_src]
     phones, _ = pickup_records(recs, skip)
     phone_ts = [e["ts"] for e in merge_episodes(phones)]  # episode starts, sorted
-    # where sees app records and REAL phone records (test pings and skipped
-    # ranges are not pickups, so they are not history either).
-    where_src = sorted([r for r in recs if r["kind"] == "app"] + phones, key=lambda r: r["ts"])
+    # where sees app records and phone records as the live app does (test pings
+    # and skipped ranges are not history; button/hotkey presses are).
+    where_src = sorted([r for r in recs if r["kind"] == "app"] + where_phone_records(recs, skip),
+                       key=lambda r: r["ts"])
     where_ts = [r["ts"] for r in where_src]
     inputs = [(r["ts"], float(r["idle"]["any"])) for r in recs if r["kind"] == "input"]
     nudge_ts = shown_nudge_times(recs)
@@ -412,11 +441,12 @@ def nudge_old(r):
 
 def nudge_memory(r):
     """The live rule since 2026-11-08: nudge.decide with the pickup memory's
-    answer at t (records before t only). No cooldown: we judge each moment."""
+    answer and the pickup pace at t (records before t only). No cooldown: we
+    judge each moment."""
     memory = {"text": r.get("memory_text"), "ready": r.get("memory_ready"),
               "n_episodes": r.get("memory_n_episodes")}
     return bool(nudge.decide(r["stall"], r.get("rank_tuned"), r["active_recent"], None, r["t"],
-                             memory=memory)[0])
+                             memory=memory, pace=r.get("pace"))[0])
 
 
 nudge_tuned = nudge_memory   # "tuned live" now means the live (memory) rule
@@ -507,6 +537,20 @@ def _fit_score(X, y, groups, train, test):
             "auc_ci": bootstrap_ci(lambda i: auc(yy[i], p[i]), len(yy), groups=gg)}
 
 
+def pickups_in_rows(rows, pickups_by_person):
+    """The "caught" denominator for a subset of moments: per person, only the
+    pickups inside that subset's scored range, i.e. first moment + 30 s < p <=
+    last moment + 180 s (the same rule moments_for uses for all moments).
+    E.g. the first pickup leaves the "after first pickup" table. People with no
+    moments in the subset get no pickups."""
+    out = {}
+    for person, pickups in pickups_by_person.items():
+        ts = [r["t"] for r in rows if r["person"] == person]
+        out[person] = ([p for p in pickups if min(ts) + LEAD_MIN < p <= max(ts) + LEAD_MAX]
+                       if ts else [])
+    return out
+
+
 def run_methods(rows, pickups_by_person):
     """All methods on one set of moments. Returns (results, matched alert rate, rate source)."""
     pre_rows = [r for r in rows if r["rank_prereg"] is not None]
@@ -538,6 +582,9 @@ def run_methods(rows, pickups_by_person):
     # Post-hoc (deviation 9): BehaviorGPT's lean to distraction, cached moments only.
     gap_rows = [r for r in rows if r.get("where_gap") is not None]
     methods.append((GAP_ROW, gap_rows, [r["where_gap"] for r in gap_rows]))
+    # Post-hoc (deviation 14): pickups in the last 10 min, the pace nudge's count.
+    pace_rows = [r for r in rows if r.get("pace") is not None]
+    methods.append((PACE_ROW, pace_rows, [r["pace"]["recent"] for r in pace_rows]))
     results = []
     for name, rr, sc in methods:
         if not rr:
@@ -563,6 +610,41 @@ def run_methods(rows, pickups_by_person):
             continue
         results.append(evaluate_method(name, rr, fire.astype(float), fire, pickups_by_person))
     return results, rate, rate_src
+
+
+DEV_ROW = MEMORY_ROW + " [dev_testing positives left out, tag]"
+
+
+def dev_testing_times(mem_recs):
+    """Episode times precursor tags `dev_testing` (us testing the pipeline),
+    from precursor.episodes() on the records the memory sees. Tag only."""
+    return sorted(e["ts"] for e in precursor.episodes(mem_recs) if e.get("dev_testing"))
+
+
+def dev_testing_row(rows, pickups_by_person, dev_by_person, rate):
+    """Sensitivity row (PROTOCOL.md deviation 10/12): the pickup memory with the
+    dev_testing pickups' positives left out. A moment is dropped if it is
+    positive only because of dev_testing pickups; those pickups also leave the
+    "caught" denominator. Never used for the headline."""
+    keep = []
+    for r in rows:
+        if r.get("memory") is None:
+            continue
+        if r["y"]:
+            pickups = pickups_by_person.get(r["person"], [])
+            dev = set(dev_by_person.get(r["person"], []))
+            ahead = [p for p in pickups if r["t"] + LEAD_MIN < p <= r["t"] + LEAD_MAX]
+            if ahead and all(p in dev for p in ahead):
+                continue
+        keep.append(r)
+    if not keep:
+        return {"method": DEV_ROW, "n_moments": 0, "skipped": "no moments left"}
+    pick = {p: [x for x in v if x not in set(dev_by_person.get(p, []))]
+            for p, v in pickups_by_person.items()}
+    sc = [r["memory"] for r in keep]
+    res = evaluate_method(DEV_ROW, keep, sc, flag_top(sc, rate), pick)
+    res["flipped"] = False
+    return res
 
 
 def print_table(title, rows, results, rate, rate_src):
@@ -604,12 +686,17 @@ def main(argv=None):
         ap.error(str(e))
 
     rows, pickups_by_person, where_srcs, mem_srcs, synthetic = [], {}, {}, {}, False
-    label_info = {}
+    label_info, dev_by_person, source_logs = {}, {}, []
     nudge_info = {"real_shown": 0, "staged": 0, "real_followed_by_pickup": 0}
     for path in args.events:
         recs, syn = load(path)
         synthetic |= syn
         person = Path(path).stem
+        last_ts = max((x["ts"] for x in recs), default=None)
+        source_logs.append({"file": str(path), "bytes": Path(path).stat().st_size,
+                            "n_records": len(recs), "last_record_ts": last_ts,
+                            "last_record_local": (dt.datetime.fromtimestamp(last_ts).isoformat(
+                                timespec="seconds") if last_ts is not None else None)})
         r, pickups, wsrc = moments_for(person, recs, skip)
         rows += r
         pickups_by_person[person] = pickups
@@ -618,8 +705,16 @@ def main(argv=None):
         phones, dropped = pickup_records(recs, skip)
         mem_srcs[person] = memory_records(recs, phones)  # same pickups as the labels
         eps = merge_episodes(phones)
+        try:
+            dev_by_person[person] = dev_testing_times(mem_srcs[person])
+        except Exception as e:  # noqa: BLE001
+            print(f"dev_testing tag failed for {person}: {e!r}")
+            dev_by_person[person] = []
         label_info[person] = {"phone_records": sum(1 for x in recs if x["kind"] == "phone"),
-                              **dropped, "episodes": len(eps), "episodes_in_scored_range": len(pickups)}
+                              **dropped, "episodes": len(eps), "episodes_in_scored_range": len(pickups),
+                              "episodes_dev_testing": len(dev_by_person[person]),
+                              "episodes_dev_testing_in_scored_range":
+                                  len(set(dev_by_person[person]) & set(pickups))}
         for e in eps:
             if looks_like_test_burst(e):
                 apps = ", ".join(a for _, a in e["events"])
@@ -652,10 +747,14 @@ def main(argv=None):
     n_pos = sum(r["y"] for r in rows)
     print(f"\n{tag}Stall-before-pickup: SUGGESTIVE evidence only.")
     for person, li in label_info.items():
-        print(f"{person}: {li['phone_records']} phone records; dropped {li['test_source']} test pings, "
+        by_src = ", ".join(f"{n} {s}" for s, n in sorted(li["dropped_source"].items())) or "none"
+        print(f"{person}: {li['phone_records']} phone records; dropped by source: {by_src} "
+              f"(not pickups: {sorted(precursor.NOT_EPISODE_SOURCES)}); "
               f"{li['skipped_range']} in --skip-pickups ranges; {li['episodes']} pickup episodes "
-              f"(records < {config.PICKUP_MERGE_S} s apart merged), {li['episodes_in_scored_range']} "
-              "inside the scored range")
+              f"(records < {config.PICKUP_MERGE_S} s after an episode's first record merged), "
+              f"{li['episodes_in_scored_range']} inside the scored range; "
+              f"{li['episodes_dev_testing']} tagged dev_testing "
+              f"({li['episodes_dev_testing_in_scored_range']} in the scored range; tag only)")
     if skip:
         print(f"Skipped pickup ranges (local time): {', '.join(args.skip_pickups)}")
     print(f"Live nudges shown: {nudge_info['real_shown']} (ignored {nudge_info['staged']} staged demo "
@@ -683,6 +782,11 @@ def main(argv=None):
         print(f"Pickup memory (post-hoc): {n_ready} of {len(rows)} moments had enough past pickups "
               f"(>= {config.PRECURSOR_MIN_EPISODES}) to be 'ready'; the score row scores every moment. "
               f"Memory text (the live nudge trigger) was set at {n_text} moments.")
+        n_pace = sum(1 for r in rows if (r.get("pace") or {}).get("high"))
+        cds = [r["pace"]["cooldown_s"] for r in rows if (r.get("pace") or {}).get("usual_gap_s")]
+        print(f"Pickup pace (post-hoc, deviation 14): pace was high (the other live nudge trigger) "
+              f"at {n_pace} of {len(rows)} moments; personal cooldown known at {len(cds)} moments"
+              + (f", median {np.median(cds) / 60:.1f} min." if cds else "."))
     print(f"BehaviorGPT pull (where_gap): {n_gap} of {len(rows)} moments have a cached answer with "
           f"scores (coverage {n_gap / len(rows):.0%}); the row uses only those."
           + (f" ({gap_error})" if gap_error else ""))
@@ -693,19 +797,27 @@ def main(argv=None):
 
     res_all, rate_all, src_all = run_methods(rows, pickups_by_person)
     print_table("All pre-registered moments (input within 10 s)", rows, res_all, rate_all, src_all)
+    res_dev = (dev_testing_row(rows, pickups_by_person, dev_by_person, rate_all) if not memory_error
+               else {"method": DEV_ROW, "n_moments": 0, "skipped": memory_error})
+    print("Sensitivity (tag, not a filter; the row above is the headline):")
+    print_table("Pickup memory without dev_testing pickups' positives", rows, [res_dev],
+                rate_all, src_all)
+    # Subset tables: "caught" counts only pickups inside the subset's scored
+    # range (pickups_in_rows), e.g. the first pickup can't be caught "after
+    # the first pickup".
+    def subset(rr):
+        return (run_methods(rr, pickups_in_rows(rr, pickups_by_person)) if rr
+                else ([], FALLBACK_RATE, "none"))
     fire_rows = [r for r in rows if r["active_recent"]]
-    res_fire, rate_fire, src_fire = (run_methods(fire_rows, pickups_by_person) if fire_rows
-                                     else ([], FALLBACK_RATE, "none"))
+    res_fire, rate_fire, src_fire = subset(fire_rows)
     print_table("Only moments where the live nudge could fire (active_recent)", fire_rows,
                 res_fire, rate_fire, src_fire)
     calm_rows = [r for r in rows if not r["after_nudge"]]
-    res_calm, rate_calm, src_calm = (run_methods(calm_rows, pickups_by_person) if calm_rows
-                                     else ([], FALLBACK_RATE, "none"))
+    res_calm, rate_calm, src_calm = subset(calm_rows)
     print_table(f"Leaving out moments within {LEAD_MAX // 60} min after a real nudge", calm_rows,
                 res_calm, rate_calm, src_calm)
     first_rows = [r for r in rows if r.get("pickups_so_far", 0) > 0]
-    res_first, rate_first, src_first = (run_methods(first_rows, pickups_by_person) if first_rows
-                                        else ([], FALLBACK_RATE, "none"))
+    res_first, rate_first, src_first = subset(first_rows)
     print_table("Only moments after the person's first pickup (memory has something to compare; "
                 "post-hoc, deviation 10)", first_rows, res_first, rate_first, src_first)
     lr = logistic(rows)
@@ -718,7 +830,8 @@ def main(argv=None):
           f"{config.NUDGE_RANK_THRESHOLD}, just-returned rule), tuned in-sample on {files}. "
           "Do not read them as out-of-sample.")
     print(f"'{MEMORY_RULE_ROW}' = the live rule since 2026-11-08 (PROTOCOL.md deviation 9): nudge only")
-    print("when the pickup memory has text at t, from records before t. Changed post-hoc (user decision).")
+    print("when the pickup memory has text at t, or the pickup pace is high (deviation 14), from records\n"
+          "before t. Changed post-hoc (user decision).")
     print(f"'{GAP_ROW}' is post-hoc too; it uses only moments with a cached BehaviorGPT answer.")
     print("CIs resample 10-minute blocks, because moments 30 s apart are not independent.")
     print("Baselines marked (flipped) were scored in their better direction (generous to them).")
@@ -729,6 +842,9 @@ def main(argv=None):
     print("before it was first run.")
 
     out = {"synthetic": synthetic, "verdict": "suggestive", "files": args.events,
+           # what this file was built from, so a stale pickups.json is visible
+           "built_at": dt.datetime.now().isoformat(timespec="seconds"),
+           "source_logs": source_logs,
            "skip_pickups": args.skip_pickups, "labels": label_info, "nudges": nudge_info,
            "n_moments": len(rows), "n_positive": int(n_pos), "n_pickup_episodes": n_eps,
            "n_not_active_recent": n_not_recent, "where_sources": where_counts,
@@ -744,10 +860,14 @@ def main(argv=None):
                                           "n_positive": int(sum(r["y"] for r in first_rows)),
                                           "matched_alert_rate": rate_first,
                                           "methods": res_first},
+           "dev_testing": {"tag_only": True,
+                           "n_episodes": sum(len(v) for v in dev_by_person.values()),
+                           "memory_without_dev_positives": res_dev},
            "pickup_memory": {"post_hoc": True, "error": memory_error,
                              "n_ready": sum(1 for r in rows if r.get("memory_ready")),
                              "n_text": sum(1 for r in rows if r.get("memory_text")),
-                             "live_rule": "memory text (nudge.decide), since 2026-11-08"},
+                             "live_rule": "memory text or pickup pace (nudge.decide), since 2026-11-08",
+                             "n_pace_high": sum(1 for r in rows if (r.get("pace") or {}).get("high"))},
            "where_gap": {"post_hoc": True, "cache_only": True, "n_with_gap": n_gap,
                          "coverage": n_gap / len(rows), "error": gap_error},
            "logistic": lr,

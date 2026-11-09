@@ -163,3 +163,100 @@ stall comes before a pickup") is the wrong shape for this user.
     labelled before scoring, and kept out of git because they are real watch
     history (`--titles evaluation/titles_candidates.csv`). With n = 14 every
     CI is wide; we report it as a pilot, not a result.
+12. **Pickup memory gates (2026-11-08, decided by debate, stricter only).**
+    Every change here except the 5-pickup minimum (user decision, unchanged
+    from the original value) can only make the memory say less; none was chosen to
+    improve a number (the live rule's text fired at 0 eval moments before and
+    after).
+    - `PRECURSOR_MIN_EPISODES` stays 5 but now counts *usable* pickups.
+      (It was briefly 15; the user set it back to 5 the same day.) From 5 to
+      14 usable pickups (`PRECURSOR_CONFIDENT_EPISODES` = 15) every answer is
+      labelled an early, less accurate guess; the rule itself is the same.
+      Counting only usable pickups is still stricter than before.
+    - **Usable (a template):** at the snapshot time (pickup minus
+      `PRECURSOR_LEAD_S`) idle is under `SETTLED_MAX_IDLE_S`, and the 5 min
+      before it hold at least `PRECURSOR_TEMPLATE_MIN_ACTIVE_S` (= `MIN_ACTIVE_S`,
+      20 s) of active input. Pickups fetched from ntfy after the fact (the app
+      was closed) have no such data. Every real pickup still counts as an
+      **outcome** (base rate, "followed", and the eval labels, unchanged).
+    - The memory's text also needs the matched-and-followed past moments to
+      lead to at least `PRECURSOR_MIN_FOLLOWED_EPISODES` (3) different pickups:
+      grid moments 30 s apart before one pickup are one event.
+    - The amber dot uses the same gate (it shows only when the memory has text).
+    - **Pre-registered tag, `dev_testing` (tag only, never a filter):** a
+      pickup whose 5-min snapshot window (ending at the snapshot time, plus the
+      page open at its start) contains an `app` record with domain `ntfy.sh`,
+      `localhost` or `127.0.0.1`, or a title containing "loophole"
+      (case-insensitive). Rule written before looking at tagged counts. On data
+      recorded after 2026-11-08, eval rows may report "templates with
+      `dev_testing` = false only" as a pre-registered sensitivity row.
+13. **Bug-fix pass (2026-11-08, ~16:00–16:50, after a code review; post-hoc).**
+    Each change below fixes a bug found by reading the code. None was chosen
+    to improve a number, but several change what features, labels and the
+    memory mean, so all numbers from before this pass are superseded. The eval
+    was re-run on `data/events-deven.jsonl` right after.
+    - **Labels.** Phone records with source `button` or `hotkey` are no longer
+      labels in any row (they usually answer a nudge). This replaces deviation
+      10's "still labels for the pre-registered rows". Dropped counts are
+      reported per source (none in this log).
+    - **Episodes.** A phone record joins an episode only if it is within
+      `PICKUP_MERGE_S` (120 s) of the episode's *first* record. Before,
+      records chained with no limit and hid re-pickups. Same rule in the eval
+      and the memory.
+    - **Typing/scroll rates** (stall score and memory trends). A tracker step
+      longer than 10 s adds neither counts nor active time. Before, its time
+      was capped but all its keys counted, so rates jumped after any gap.
+      Also applies to `scroll_no_type` and `burst_pause_count`.
+    - **Breaks.** A tracker gap of 4+ min is a break only if idle is >= 4 min
+      after it or no keys, clicks or scrolls were added across it.
+    - **Switches and dwell.** `IGNORE_APPS` are skipped, a browser record with
+      no tab (failed read) is not a new place, and switches per minute count
+      over the same span they are divided by.
+    - **Where history.** It always keeps the newest laptop app record that
+      maps to an item, not the newest raw record (a phone record or Finder
+      could push out the app you were in). `where_share` skips sticky items
+      when the rank does (`skip_sticky`); the pre-registered share is unchanged.
+    - **Pickup memory.**
+      - The lift counts only past moments similar to the templates "now"
+        matched, not moments similar to any template. The base rate is
+        unchanged.
+      - "Now" is never compared with a template whose snapshot is within
+        `PRECURSOR_LOOKBACK_S` of t (the pickup that just happened).
+      - Trends with too little active time are missing (None), not 0.
+      - The lift needs >= 5 matched moments (`PRECURSOR_MIN_MATCHED_MOMENTS`),
+        raised from a hard-coded 3. This is stricter only.
+      - `dev_testing` window is now [pickup - 6 min, min(pickup + 60 s, t)),
+        so testing right at the pickup is tagged. Still a tag, never a filter.
+        eval_pickups now reports the tagged count and a sensitivity row (memory
+        with dev_testing pickups' positives left out).
+    - **Nudge records.** "Nudge shown" is written only by the menu bar when a
+      nudge really appears; the engine records only its decision. Staged
+      nudges, including every `--demo` mode nudge, are logged `staged: true`
+      and do not start the live cooldown. Logs before this pass hold
+      engine-written "shown" records that may not have been displayed (the 3
+      in the 2026-11-08 log came from the old rule).
+    - **Eval.** In subset tables, "caught" counts only pickups inside that
+      subset's scored range. `pickups.json` records which log it was built
+      from and when.
+14. **Pickup pace and personal cooldown (2026-11-08, user decision, post-hoc).**
+    Added after seeing that the user picks up often (median about 6.5 min
+    between pickup episodes in `data/events-deven.jsonl`), so the memory's
+    2x lift almost never passes. `loophole/pace.py`, settings `PACE_*` and
+    `NUDGE_COOLDOWN_MIN/MAX` in `config.py`.
+    - **Usual gap:** median time between the user's last 30 pickup episodes
+      that started before the 10-min window (same episode rule as the memory;
+      gaps of 60+ min are time away and skipped). Unknown until 5 gaps.
+    - **Personal cooldown:** time between nudges = the usual gap, kept in
+      [3, 20] min; 10 min (`NUDGE_COOLDOWN`) while it is unknown.
+    - **Pace nudge:** a second live trigger next to the memory text. It fires
+      when episodes in the last 10 min >= max(3, ceil(2 x 10 min / usual gap)),
+      with the same "away / just returned" and cooldown checks. The nudge says
+      the count and the usual pace. It is meant to make the user aware of
+      their pace, not to predict a pickup.
+    - It reads only phone records with ts < t and never feeds `when_score`.
+    - eval_pickups: the live-rule row is now "memory text or pace", and a
+      post-hoc row "pickups in last 10 min (pace)" scores the count. The
+      settings were chosen before this row was first run. On the 2026-11-08
+      log the pace was high at 1 of 231 moments, which was not an active
+      moment, so the live rule still fired at 0 eval moments. We will not
+      tune these settings on this file.

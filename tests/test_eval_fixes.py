@@ -26,13 +26,13 @@ def phone(ts, app="Instagram", source="shortcut"):
 
 def test_records_closer_than_merge_gap_are_one_episode():
     g = config.PICKUP_MERGE_S
-    recs = [phone(T0), phone(T0 + 30), phone(T0 + 30 + g - 1),   # chain: one episode
-            phone(T0 + 30 + g - 1 + g),                           # exactly g later: new episode
+    recs = [phone(T0), phone(T0 + 30), phone(T0 + g - 1),   # within g of the first: one episode
+            phone(T0 + g),                                   # exactly g after the first: new
             phone(T0 + 5000)]
     eps = ep.merge_episodes(recs)
-    assert [e["ts"] for e in eps] == [T0, T0 + 30 + 2 * g - 1, T0 + 5000]
+    assert [e["ts"] for e in eps] == [T0, T0 + g, T0 + 5000]
     assert [e["n"] for e in eps] == [3, 1, 1]
-    assert eps[0]["end"] == T0 + 30 + g - 1
+    assert eps[0]["end"] == T0 + g - 1
 
 
 def test_labels_use_episode_start():
@@ -59,7 +59,7 @@ def test_test_source_is_not_a_pickup():
     recs = [phone(T0, source="test"), phone(T0 + 500)]
     kept, dropped = ep.pickup_records(recs)
     assert [r["ts"] for r in kept] == [T0 + 500]
-    assert dropped == {"test_source": 1, "skipped_range": 0}
+    assert dropped == {"dropped_source": {"test": 1}, "skipped_range": 0}
 
 
 def test_test_source_is_not_where_history():
