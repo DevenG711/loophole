@@ -7,10 +7,30 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-API_KEY = os.getenv("UNBOXAI_API_KEY")
+# The BehaviorGPT key everyone shares, so people who download the zip do not
+# need their own. Your own UNBOXAI_API_KEY in .env wins over it.
+SHARED_API_KEY = ""
+API_KEY = os.getenv("UNBOXAI_API_KEY") or SHARED_API_KEY or None
 CATALOG_ID = os.getenv("LOOPHOLE_CATALOG_ID", "cat_35a0afc5ae400da9f74d27e2")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
 USER = os.getenv("LOOPHOLE_USER", "me")
+
+
+def _env_ints(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    """'25,50,90' from .env -> (25, 50, 90). Bad or empty values -> default."""
+    raw = os.getenv(name, "")
+    try:
+        vals = tuple(int(x) for x in raw.replace(" ", "").split(",") if x)
+    except ValueError:
+        print(f"[loophole] {name}={raw!r} in .env is not a list of whole numbers; using {default}")
+        return default
+    vals = tuple(v for v in vals if v > 0)
+    return vals or default
+
+
+# Settings people can change in .env (see README.md, "Settings")
+BREAK_MINUTES = _env_ints("LOOPHOLE_BREAK_MINUTES", (5,))[0]
+SESSION_LENGTHS = _env_ints("LOOPHOLE_SESSION_LENGTHS", (25, 50, 90))  # menu choices, minutes
 
 DATA_DIR = ROOT / "data"
 EVENTS_FILE = DATA_DIR / f"events-{USER}.jsonl"
@@ -54,7 +74,6 @@ SETTLED_DOMAINS = {"meet.google.com", "zoom.us", "teams.microsoft.com"}
 ACTIVE_STEP_IDLE_S = 10
 MIN_ACTIVE_S = 20         # need this much active time before key_drop counts
 NUDGE_COOLDOWN = 10 * 60   # set by the user 2026-11-08 (was 20 min, never tested)
-BREAK_MINUTES = 5
 
 # Pickup pace (loophole/pace.py), added 2026-11-08 by user decision, after
 # seeing data (post-hoc, PROTOCOL.md deviation 14). Personal numbers from your

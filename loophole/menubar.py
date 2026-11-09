@@ -38,7 +38,7 @@ from . import catalog, config, events
 # Settings for normal and demo mode
 # ---------------------------------------------------------------------------
 
-SESSION_LENGTHS = (25, 50, 90)  # minutes offered in the menu
+SESSION_LENGTHS = config.SESSION_LENGTHS  # minutes offered in the menu (.env)
 
 # Demo mode: the stage demo can't wait 10 minutes for a second nudge.
 # Not shorter: the demo thresholds sit below the median stall, so a 60 s gap
@@ -78,6 +78,11 @@ SPARK = "▁▂▃▄▅▆▇█"
 # ---------------------------------------------------------------------------
 # Pure helpers (no GUI). Tested in tests/test_ui.py.
 # ---------------------------------------------------------------------------
+
+def phone_link(topic: str | None = None) -> str:
+    """The URL the iPhone Shortcut posts to (docs/phone-setup.md)."""
+    return f"https://ntfy.sh/{config.NTFY_TOPIC if topic is None else topic}"
+
 
 def format_minutes(seconds: float) -> str:
     """12.3 minutes -> '12 min'; 75 minutes -> '1 h 15 min'."""
@@ -532,12 +537,16 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
             for m in SESSION_LENGTHS:
                 self.start_menu.add(rumps.MenuItem(f"{m} min", callback=self._starter(m)))
             # Phone setup
-            topic = config.NTFY_TOPIC or "(not set: add NTFY_TOPIC to .env)"
             setup = rumps.MenuItem("Phone setup")
-            setup.add(rumps.MenuItem(f"ntfy topic: {topic}"))
-            setup.add(rumps.MenuItem("Open setup guide (docs/phone-setup.md)",
-                                     callback=self.on_open_docs))
+            if config.NTFY_TOPIC:
+                setup.add(rumps.MenuItem(f"Your phone link: {phone_link()}"))
+                setup.add(rumps.MenuItem("Copy phone link", callback=self.on_copy_link))
+            else:
+                setup.add(rumps.MenuItem("No phone link yet: run  bash setup.sh"))
+            setup.add(rumps.MenuItem("Open phone setup guide", callback=self.on_open_docs))
             setup.add(rumps.MenuItem("Send test ping", callback=self.on_test_ping))
+            setup.add(None)
+            setup.add(rumps.MenuItem("Open settings file (.env)", callback=self.on_open_settings))
 
             items = [self.i_focused, self.i_momentum, self.i_likely, self.i_break,
                      self.i_phone, self.i_pace, self.i_memory, self.i_reason, None, self.n_header, self.n_break, self.n_fine, self.back,
@@ -929,7 +938,21 @@ def build_app(demo: bool = False, events_path: Path = config.EVENTS_FILE,
 
         # ---- phone setup ------------------------------------------------
         def on_open_docs(self, _item) -> None:
-            subprocess.run(["open", str(config.ROOT / "docs" / "phone-setup.md")], check=False)
+            subprocess.run(["open", "-e", str(config.ROOT / "docs" / "phone-setup.md")], check=False)
+
+        def on_copy_link(self, _item) -> None:
+            subprocess.run(["pbcopy"], input=phone_link().encode(), check=False)
+            notify("Loophole", "Phone link copied",
+                   "Paste it into the Get Contents of URL action. If your iPhone uses "
+                   "the same Apple ID, you can paste it straight on the phone.")
+
+        def on_open_settings(self, _item) -> None:
+            env = config.ROOT / ".env"
+            if not env.exists():
+                notify("Loophole", "No settings file", "Run  bash setup.sh  first.")
+                return
+            subprocess.run(["open", "-e", str(env)], check=False)
+            notify("Loophole", "Settings", "Save the file, then quit and restart Loophole.")
 
         def on_test_ping(self, _item) -> None:
             phone = _load("phone")
@@ -1057,6 +1080,13 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(f"[loophole] another Loophole is already writing to {config.EVENTS_FILE}. "
                          "Quit it first (two copies would log every event and pickup twice).")
     print(f"[loophole] writing events to {config.EVENTS_FILE}")
+    if not config.API_KEY:
+        print("[loophole] no BehaviorGPT API key: 'Likely next' stays empty. "
+              "Add UNBOXAI_API_KEY to .env (README.md, Settings).")
+    if config.NTFY_TOPIC:
+        print(f"[loophole] phone link for the iPhone Shortcut: {phone_link()}")
+    else:
+        print("[loophole] no NTFY_TOPIC in .env, so phone pickups are off. Run: bash setup.sh")
     build_app(demo=args.demo, island=not args.no_island).run()
 
 
