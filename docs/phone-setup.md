@@ -30,8 +30,7 @@ ones.
 
 ## 2. Make one automation for all your apps
 
-You make this once. It covers every app you pick, and it sends the name of
-whichever app you opened.
+You make this once, and it covers every app you tick.
 
 1. Open the **Shortcuts** app and tap the **Automation** tab at the bottom.
 2. Tap **+** (top right). If you have no automations yet, tap **New Automation**.
@@ -46,29 +45,31 @@ whichever app you opened.
 10. Tap the **>** arrow next to the action to show more options, and set:
     - **Method:** `POST`
     - **Request Body:** `Form`
-    - Tap **Add new field** > **Text**. Set the key to `app`. For the value,
-      tap the text box and pick **Shortcut Input** from the bar above the
-      keyboard. Shortcut Input is the app that was just opened, so Loophole
-      gets its name (for example `Instagram`).
+    - Tap **Add new field** > **Text**. Set the key to `app` and the text to
+      `Phone`.
 11. Tap **Done** (top right).
 
-That's it. To watch more apps later, edit this automation and tick them in
-step 4. You don't need a new automation.
+To watch more apps later, edit this automation and tick them in step 4.
 
-### Which apps Loophole knows by name
+iOS doesn't tell the automation which of the ticked apps was opened, so every
+pickup arrives as "Phone". That's all Loophole needs to learn when you reach
+for your phone and to nudge you. What you lose: Loophole can't tell
+BehaviorGPT which phone app it was, and nudges say "your phone" instead of
+"TikTok on your phone".
 
-Loophole can tell BehaviorGPT about these apps (capitals don't matter):
+### Optional: send the app's name
+
+If you want the app's name, make one automation per app instead: in step 4
+tick just one app, and in step 10 type that app's name instead of `Phone`.
+Repeat for each app. You can mix both: separate automations for your top one
+or two apps, and the all-apps one for the rest (don't tick an app in both, or
+each pickup counts twice).
+
+Use these names so Loophole knows which app it was (capitals don't matter):
 
 `Instagram`, `TikTok`, `YouTube`, `X`, `Reddit`, `Snapchat`, `Facebook`,
 `WhatsApp`, `Messages`, `Discord`, `Pinterest`, `LinkedIn`, `Netflix`,
 `Twitch`, `Spotify`, `Robinhood`, `Chess`
-
-Any other app you tick still counts as a pickup. Loophole just can't tell
-BehaviorGPT what the app was.
-
-If the **Last phone** line (see step 3) shows `Unknown` instead of the app's
-name, the value in step 10 is empty: edit the automation and pick
-**Shortcut Input** again. Pickups still count while you fix it.
 
 ## 3. Test it
 
@@ -78,7 +79,7 @@ name, the value in step 10 is empty: edit the automation and pick
 3. The first time, iOS may ask **Allow "…" to connect to ntfy.sh?** Tap
    **Always Allow**. Without it the automation stops and asks every time.
 4. Within about 10 seconds, click the Loophole dot. The **Last phone** line
-   should say something like "Last phone: Instagram, 0 min ago".
+   should say something like "Last phone: Phone, 0 min ago".
 
 Still nothing? Open your phone link in a browser on the Mac. Each pickup shows
 up there as a message.

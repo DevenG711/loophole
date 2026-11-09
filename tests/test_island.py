@@ -63,6 +63,9 @@ def test_distraction_name():
     from loophole.menubar import distraction_name
     assert distraction_name({"app": "Google Chrome", "domain": "www.youtube.com"}) == "youtube.com"
     assert distraction_name({"app": "Messages", "domain": None}) == "Messages"
+    # The single all-apps iPhone automation sends "Phone"
+    assert distraction_name({"kind": "phone", "app": "Phone"}) == "your phone"
+    assert distraction_name({"kind": "phone", "app": "tiktok"}) == "TikTok on your phone"
 
 
 def test_phone_pickup_triggers_distraction():

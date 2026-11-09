@@ -137,7 +137,8 @@ def distraction_name(rec: dict) -> str:
     if rec.get("kind") == "phone":
         app = (rec.get("app") or "").strip()
         nice = PHONE_APP_NAMES.get(app.lower(), app[:1].upper() + app[1:])
-        return f"{nice} on your phone" if nice and nice.lower() != "unknown" else "your phone"
+        # "Phone" is what the single all-apps iPhone automation sends.
+        return f"{nice} on your phone" if nice and nice.lower() not in ("unknown", "phone") else "your phone"
     domain = (rec.get("domain") or "").lower().removeprefix("www.").removeprefix("m.")
     return domain or rec.get("app") or "a distraction"
 
