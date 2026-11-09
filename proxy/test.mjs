@@ -66,3 +66,40 @@ test("missing secret is a clear error", async () => {
 test("rejectReason accepts the app's real shape", () => {
   assert.equal(rejectReason(good(), CATALOG_ID), null);
 });
+
+// ---- Vercel function (site/api/rank.js) ----
+const vercel = await import("../site/api/rank.js");
+
+test("vercel: GET is a health check", async () => {
+  assert.equal(await vercel.GET().text(), "Loophole proxy is running.\n");
+});
+
+test("vercel: POST forwards with the key from the environment", async () => {
+  calls = [];
+  process.env.UNBOXAI_API_KEY = "vercel-key";
+  delete process.env.KV_REST_API_URL;
+  const resp = await vercel.POST(post(good()));
+  assert.equal(resp.status, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].init.headers["x-api-key"], "vercel-key");
+  assert.equal((await vercel.POST(post({ ...good(), store_id: "cat_other" }))).status, 403);
+  delete process.env.UNBOXAI_API_KEY;
+});
+
+test("vercel: Upstash rate limit allows 10 a minute, fails open", async () => {
+  const real = globalThis.fetch;
+  let count = 0;
+  globalThis.fetch = async (url, init) => {
+    assert.ok(url.endsWith("/pipeline"));
+    assert.equal(init.headers.authorization, "Bearer t");
+    count += 1;
+    return new Response(JSON.stringify([{ result: count }, { result: 1 }]));
+  };
+  const env = { KV_REST_API_URL: "https://redis.test", KV_REST_API_TOKEN: "t" };
+  for (let i = 0; i < 10; i++) assert.equal(await vercel.upstashAllow("1.2.3.4", env), true);
+  assert.equal(await vercel.upstashAllow("1.2.3.4", env), false);
+  assert.equal(await vercel.upstashAllow("1.2.3.4", {}), true);   // no Redis: no limit
+  globalThis.fetch = async () => { throw new Error("down"); };
+  assert.equal(await vercel.upstashAllow("1.2.3.4", env), true);  // Redis down: let it through
+  globalThis.fetch = real;
+});

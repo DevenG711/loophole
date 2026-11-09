@@ -1,40 +1,79 @@
 # Loophole proxy
 
-A Cloudflare Worker that holds the shared BehaviorGPT API key, so people who
-download Loophole need no key and never see one.
+The shared BehaviorGPT API key lives on a server, so people who download
+Loophole need no key and never see one.
 
 ```
-Loophole on each Mac  →  this Worker (has the key)  →  BehaviorGPT
+Loophole on each Mac  →  proxy (has the key)  →  BehaviorGPT
 ```
 
-It forwards only the one call the app makes (`POST /v1/vector/recommendations`,
-the app's `client.complete(...)`), only on Loophole's catalog, only stateless
-(`register_event: false`, no `user_id`), with at most 20 history events. Each
-IP gets 10 requests a minute; the app makes about 2. Anything else gets an
-error and never reaches BehaviorGPT, so the key can't upload catalogs or store
-events.
+The proxy forwards only the one call the app makes
+(`POST /v1/vector/recommendations`, the app's `client.complete(...)`), only on
+Loophole's catalog, only stateless (`register_event: false`, no `user_id`),
+with at most 20 history events. Anything else gets an error and never reaches
+BehaviorGPT, so the key can't upload catalogs or store events.
 
-## Deploy (once, about 5 minutes)
+There are two versions with the same rules ([site/api/_proxy.js](../site/api/_proxy.js)):
 
-You need a free Cloudflare account and Node.js.
+- **Vercel** (main): [site/api/rank.js](../site/api/rank.js), deployed with
+  the landing page. One project, one address.
+- **Cloudflare Worker** (backup): [src/index.js](src/index.js).
+
+## Deploy on Vercel (with the landing page)
+
+You need a free Vercel account. The GitHub repo can stay private for this.
+
+1. Go to [vercel.com/new](https://vercel.com/new) and import the
+   `DevenG711/loophole` repo.
+2. On the setup screen:
+   - **Root Directory:** click Edit and pick `site`.
+   - **Framework Preset:** Other. Leave the build and output settings empty.
+   - **Environment Variables:** add `UNBOXAI_API_KEY` with your key as the value.
+3. Click **Deploy**. Vercel gives you an address like
+   `https://loophole-xyz.vercel.app`.
+4. Check it: open `https://<your-address>/api/rank` in a browser. It should
+   say "Loophole proxy is running." The address itself shows the landing page.
+5. Put the address (no path, no `/` at the end) in `DEFAULT_PROXY_URL` in
+   [../loophole/config.py](../loophole/config.py), then commit and push.
+   Every new download then uses it.
+
+Later pushes to `main` redeploy the site and the proxy on their own. To change
+the key: Settings > Environment Variables, edit it, then Deployments > the
+latest one > **Redeploy** (Vercel only reads new variables on a new deploy).
+
+### Rate limit (optional, recommended)
+
+Without it, someone could call the proxy in a loop and use up your
+BehaviorGPT quota (they still can't see the key or do anything else).
+
+1. In the Vercel project: **Storage** > **Create Database** > **Upstash for
+   Redis** (free plan) > connect it to this project.
+2. That adds `KV_REST_API_URL` and `KV_REST_API_TOKEN` to the project. Redeploy.
+
+Each IP then gets 10 requests a minute; the app makes about 2. If Redis is
+down, requests go through rather than breaking the app.
+
+### Command line instead
+
+```bash
+cd site
+npx vercel login
+npx vercel link                          # make or pick the project
+npx vercel env add UNBOXAI_API_KEY production   # paste the key when asked
+npx vercel deploy --prod
+```
+
+## Deploy on Cloudflare instead
 
 ```bash
 cd proxy
-npx wrangler login                        # opens the browser to sign in
+npx wrangler login
 npx wrangler secret put UNBOXAI_API_KEY   # paste the key when asked
 npx wrangler deploy
 ```
 
-`deploy` prints the Worker's address, like
-`https://loophole-proxy.<your-subdomain>.workers.dev`. Then:
-
-1. Open that address in a browser. It should say "Loophole proxy is running."
-2. Put the address in `DEFAULT_PROXY_URL` in
-   [../loophole/config.py](../loophole/config.py), and commit and push. Every
-   new download then uses it.
-
-To change the key later, run `npx wrangler secret put UNBOXAI_API_KEY` again.
-No redeploy and no app update needed.
+The rate limit is built in (`wrangler.toml`). Use the printed
+`https://loophole-proxy.<you>.workers.dev` address as `DEFAULT_PROXY_URL`.
 
 ## Test
 
@@ -42,10 +81,4 @@ No redeploy and no app update needed.
 node --test proxy/test.mjs
 ```
 
-No network: BehaviorGPT is faked.
-
-## Watch it
-
-Cloudflare dashboard > Workers & Pages > loophole-proxy shows requests and
-errors. The free plan allows 100,000 requests a day, which is about 400 hours
-of focus sessions.
+This tests both versions. There's no network: BehaviorGPT and Redis are faked.

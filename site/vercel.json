@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/v1/vector/recommendations", "destination": "/api/rank" }
+  ]
+}
