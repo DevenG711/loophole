@@ -13,7 +13,7 @@ load_dotenv(ROOT / ".env")
 # call), so people who download the zip need no key and never see it.
 API_KEY = os.getenv("UNBOXAI_API_KEY") or None
 # Set DEFAULT_PROXY_URL to the deployed proxy address (proxy/README.md).
-DEFAULT_PROXY_URL = ""
+DEFAULT_PROXY_URL = "https://loophole-site.vercel.app"
 PROXY_URL = (os.getenv("LOOPHOLE_PROXY_URL") or DEFAULT_PROXY_URL).rstrip("/") or None
 CATALOG_ID = os.getenv("LOOPHOLE_CATALOG_ID", "cat_35a0afc5ae400da9f74d27e2")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
